@@ -1,0 +1,81 @@
+# Historical NYC high-temperature model
+
+This directory builds the first independent probability model for the Kalshi
+`KXHIGHNY` daily-high market.
+
+## Why NBS/NBM for the first baseline?
+
+The live collector stores the public NWS point forecast, but the public
+`api.weather.gov` endpoint is not a historical forecast archive. For historical
+verification we start with the NWS National Blend of Models (NBS text guidance)
+archived by Iowa State's IEM. It provides:
+
+- `TXN`: 18-hour max/min temperature guidance
+- `XND`: standard deviation of the max/min guidance
+- archived model runs, so there is no look-ahead bias
+
+Realized highs come from IEM's NWSCLI daily climate summaries for `KNYC`
+(Central Park).
+
+This baseline is intentionally separate from `collector.py`; no historical
+research code modifies the live database or timer.
+
+## Build a dataset
+
+From `kalshi-research/`:
+
+```bash
+source .venv/bin/activate
+python -m historical.build_nbm_history \
+  --start 2021-01-01 \
+  --end 2026-09-30
+```
+
+Output defaults to:
+
+```
+data/historical/nbm_nyc_daily_high.csv
+```
+
+The script is deliberately conservative about IEM request rates and requests
+NWSCLI observations year-by-year because IEM documents a two-second throttle on
+that endpoint.
+
+## Fit the empirical error model
+
+```bash
+python -m historical.forecast_error \
+  data/historical/nbm_nyc_daily_high.csv
+```
+
+This bins forecasts by lead time (12/24/36/48/60/72 hours by default) and
+reports bias, error standard deviation, MAE, RMSE, and 90th-percentile absolute
+error. The JSON model is written to:
+
+```
+data/models/nbm_error_model.json
+```
+
+## Important modeling notes
+
+1. The dataset uses the **forecast that existed at the time**, not a reforecast.
+2. `TXN` alternates maximum/minimum guidance. We classify the daytime maximum
+   using its local-evening valid time, avoiding a hard-coded UTC hour across DST.
+3. Lead time is measured to 3 PM America/New_York on the target date. That is an
+   analysis convention, not a claim that the high always occurs at 3 PM.
+4. The fitted normal distribution is only a baseline. We should test empirical
+   residual distributions, seasonality, precipitation regimes, and NBM's own
+   `XND` uncertainty before using model probabilities for paper trading.
+5. NWS climate-summary day boundaries can differ subtly from a strict midnight
+   local calendar day during DST. This should be audited against Kalshi's actual
+   Weather Company settlement history before real-money use.
+
+## Next research steps
+
+- Validate the generated rows around DST transitions and known hot/cold days.
+- Compare model `XND` against realized error; it may outperform one global sigma.
+- Add out-of-sample splits by calendar time.
+- Add a current-market comparator that maps the model distribution into the six
+  Kalshi temperature buckets and measures edge against executable asks.
+- Add raw archived NDFD as a second independent model, not as a dependency of
+  this baseline.
