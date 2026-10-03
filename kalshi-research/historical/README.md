@@ -37,9 +37,9 @@ Output defaults to:
 data/historical/nbm_nyc_daily_high.csv
 ```
 
-The script is deliberately conservative about IEM request rates and requests
-NWSCLI observations year-by-year because IEM documents a two-second throttle on
-that endpoint.
+The script requests NWSCLI observations year-by-year and retries IEM 429/5xx
+responses with bounded backoff. This matters even for small probes: the service
+can throttle closely spaced CGI requests.
 
 ## Fit the empirical error model
 
@@ -59,8 +59,9 @@ data/models/nbm_error_model.json
 ## Important modeling notes
 
 1. The dataset uses the **forecast that existed at the time**, not a reforecast.
-2. `TXN` alternates maximum/minimum guidance. We classify the daytime maximum
-   using its local-evening valid time, avoiding a hard-coded UTC hour across DST.
+2. NOAA's NBM station-card definition reports TXN minimums at 12Z and TXN
+   maximums at 00Z on the following day. We therefore use only 00Z TXN records
+   for KNYC daily-high modeling and map each one to the preceding target date.
 3. Lead time is measured to 3 PM America/New_York on the target date. That is an
    analysis convention, not a claim that the high always occurs at 3 PM.
 4. The fitted normal distribution is only a baseline. We should test empirical
@@ -91,8 +92,8 @@ python -m historical.probe_iem --date 2026-09-25
 ```
 
 The probe is intentionally tiny. It prints the returned MOS and daily-climate
-column names, counts rows with `TXN`, shows one `TXN/XND` sample, and exits
-non-zero if required fields are missing.
+column names, separates 00Z TXN maxima from 12Z TXN minima, shows one maximum
+`TXN/XND` sample, and exits non-zero if required fields are missing.
 
 ## Chronological out-of-sample validation
 

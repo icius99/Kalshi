@@ -117,9 +117,37 @@ def _iter_chunks(start: date, end: date, days: int):
         cursor = chunk_end + timedelta(days=1)
 
 
-def fetch_csv(session: requests.Session, url: str, params: dict) -> list[dict[str, str]]:
-    response = session.get(url, params=params, timeout=60)
-    response.raise_for_status()
+def fetch_csv(
+    session: requests.Session,
+    url: str,
+    params: dict,
+    max_attempts: int = 5,
+) -> list[dict[str, str]]:
+    """Fetch an IEM CSV endpoint with bounded retry/backoff for throttling."""
+
+    response = None
+    for attempt in range(max_attempts):
+        response = session.get(url, params=params, timeout=60)
+
+        if response.status_code == 429 or 500 <= response.status_code < 600:
+            if attempt == max_attempts - 1:
+                response.raise_for_status()
+
+            retry_after = response.headers.get("Retry-After")
+            try:
+                delay = float(retry_after) if retry_after else 2.5 * (attempt + 1)
+            except ValueError:
+                delay = 2.5 * (attempt + 1)
+
+            time.sleep(max(2.5, delay))
+            continue
+
+        response.raise_for_status()
+        break
+
+    if response is None:
+        raise RuntimeError("IEM request did not produce a response")
+
     text = response.text
     reader = csv.DictReader(io.StringIO(text))
     rows = list(reader)
@@ -203,13 +231,15 @@ def extract_daily_high_forecasts(
     tz_name: str,
     anchor_hour: int,
 ) -> list[dict]:
-    """Extract NBS TXN values representing daytime maximum temperature.
+    """Extract NBS TXN values representing daily maximum temperature.
 
-    NBS TXN alternates max/min guidance.  We classify a TXN record as a daily
-    maximum when its valid time lands in the local evening (17:00-23:59).
-    That is when the daytime max-temperature period terminates for NYC and is
-    more robust than hard-coding a particular UTC hour across DST/version
-    changes.
+    NOAA's NBM station-card definition is explicit:
+    - TXN minimum: 00Z-18Z period, reported at 12Z.
+    - TXN maximum: 12Z current day-06Z next day, reported at 00Z next day.
+
+    For KNYC, therefore, only 00Z TXN records are maxima.  The market target
+    date is the UTC date on which that max period begins, i.e. the calendar
+    date immediately preceding the 00Z report.
     """
     tz = ZoneInfo(tz_name)
     forecasts: list[dict] = []
@@ -224,11 +254,10 @@ def extract_daily_high_forecasts(
         if runtime is None or valid is None:
             continue
 
-        local_valid = valid.astimezone(tz)
-        if not 17 <= local_valid.hour <= 23:
+        if valid.hour != 0 or valid.minute != 0:
             continue
 
-        target_date = local_valid.date()
+        target_date = (valid - timedelta(hours=12)).date()
         anchor = datetime.combine(target_date, dtime(anchor_hour), tzinfo=tz)
         lead_hours = (anchor.astimezone(timezone.utc) - runtime).total_seconds() / 3600.0
         if lead_hours < -3 or lead_hours > 168:
@@ -251,8 +280,9 @@ def extract_daily_high_forecasts(
 def nearest_per_runtime_target(forecasts: list[dict]) -> list[dict]:
     """Deduplicate repeated rows for the same runtime/target date.
 
-    Prefer the valid record closest to 20:00 local, a reasonable endpoint for
-    the daytime max period in NYC.
+    A conforming NBS bulletin should yield one 00Z daily-maximum TXN record for
+    each runtime/target date.  Keep a deterministic record if an archive ever
+    contains duplicates.
     """
     groups: dict[tuple[datetime, date], list[dict]] = defaultdict(list)
     for item in forecasts:
