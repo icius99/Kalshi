@@ -7,6 +7,56 @@ from pathlib import Path
 from research.temperature import bucket_from_market
 
 
+def empirical_error_pmf_from_counts(
+    error_counts: dict[int, int],
+    alpha: float = 0.1,
+) -> dict[int, float]:
+    """Laplace-smoothed empirical integer-Fahrenheit error distribution."""
+    if alpha <= 0:
+        raise ValueError("alpha must be positive")
+    if not error_counts:
+        raise ValueError("error_counts must not be empty")
+
+    support_min = min(-20, min(error_counts))
+    support_max = max(20, max(error_counts))
+    support = range(support_min, support_max + 1)
+    denominator = sum(error_counts.values()) + alpha * len(support)
+    return {
+        error: (error_counts.get(error, 0) + alpha) / denominator
+        for error in support
+    }
+
+
+def probabilities_from_error_counts(
+    markets: list[dict],
+    forecast_high_f: float,
+    error_counts: dict[int, int],
+    alpha: float = 0.1,
+) -> dict[str, float]:
+    """Map an empirical error histogram into an exhaustive temperature event."""
+    pmf = empirical_error_pmf_from_counts(error_counts, alpha)
+    probabilities = {}
+    for market in markets:
+        ticker = market.get("market_ticker", market.get("ticker"))
+        if not ticker:
+            raise ValueError("market missing ticker")
+        bucket = bucket_from_market(
+            ticker,
+            market.get("floor_strike"),
+            market.get("cap_strike"),
+        )
+        probabilities[ticker] = sum(
+            mass
+            for error, mass in pmf.items()
+            if bucket.lower <= forecast_high_f + error <= bucket.upper
+        )
+
+    total = sum(probabilities.values())
+    if total <= 0:
+        raise ValueError("market buckets captured no empirical probability mass")
+    return {ticker: probability / total for ticker, probability in probabilities.items()}
+
+
 @dataclass(frozen=True)
 class ErrorBucket:
     lead_hours: int
@@ -64,16 +114,7 @@ class ForecastErrorModel:
             raise ValueError(
                 "model bucket has no empirical error_counts; rebuild the historical model"
             )
-
-        support_min = min(-20, min(observed))
-        support_max = max(20, max(observed))
-        support = range(support_min, support_max + 1)
-        denominator = bucket.n + alpha * len(support)
-
-        return {
-            error: (observed.get(error, 0) + alpha) / denominator
-            for error in support
-        }
+        return empirical_error_pmf_from_counts(observed, alpha)
 
     def probabilities_for_markets(
         self,
@@ -84,32 +125,10 @@ class ForecastErrorModel:
     ) -> tuple[ErrorBucket, dict[str, float]]:
         """Map empirical historical forecast errors into current Kalshi buckets."""
         fit = self.nearest(lead_hours, max_distance)
-        pmf = self.error_pmf(fit)
-        probabilities: dict[str, float] = {}
-
-        for market in markets:
-            ticker = market["market_ticker"]
-            bucket = bucket_from_market(
-                ticker,
-                market.get("floor_strike"),
-                market.get("cap_strike"),
-            )
-
-            probability = 0.0
-            for error, mass in pmf.items():
-                actual = forecast_high_f + error
-                if bucket.lower <= actual <= bucket.upper:
-                    probability += mass
-
-            probabilities[ticker] = probability
-
-        total = sum(probabilities.values())
-        if total <= 0:
-            raise ValueError("market buckets captured no empirical probability mass")
-
-        # A KXHIGHNY event is intended to be an exhaustive partition. Normalize
-        # tiny floating/support artifacts so the returned distribution sums to 1.
-        return fit, {
-            ticker: probability / total
-            for ticker, probability in probabilities.items()
-        }
+        probabilities = probabilities_from_error_counts(
+            markets,
+            forecast_high_f,
+            fit.error_counts,
+            self.smoothing_alpha,
+        )
+        return fit, probabilities
