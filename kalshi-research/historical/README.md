@@ -117,11 +117,16 @@ python -m historical.validate_chronological \
   --test-start 2025-01-01
 ```
 
-The report includes raw/corrected RMSE, probabilistic log score, and 50/80/90%
-interval coverage for each lead-time bucket. A useful model should not merely
-reduce RMSE; its uncertainty should also be reasonably calibrated. Persistent
-under-coverage means the model is overconfident and should not be used to infer
-market edge.
+The report includes raw/corrected RMSE, probabilistic log score, and interval
+coverage for each lead-time bucket. It also evaluates NBM's case-specific
+`XND` uncertainty out of sample. A multiplicative XND scale is fit on the
+training period only, then frozen for the holdout; the report shows the scale,
+holdout log loss, and 90% interval coverage. This tells us whether forecast-
+specific uncertainty adds value beyond one global residual sigma.
+
+A useful model should not merely reduce RMSE; its uncertainty should also be
+reasonably calibrated. Persistent under-coverage means the model is
+overconfident and should not be used to infer market edge.
 
 ## Fee-aware paper signals
 

@@ -86,6 +86,28 @@ def empirical_error_probability(error: float, pmf: dict[int, float]) -> float:
     return max(1e-12, pmf.get(rounded, 1e-12))
 
 
+def fit_xnd_scale(rows: list[dict]) -> tuple[float | None, int]:
+    """Fit a zero-mean multiplicative scale for NBM XND on training data.
+
+    If sigma_i = scale * XND_i and forecast error is modeled as Normal(0, sigma_i),
+    the maximum-likelihood scale is sqrt(mean((error / XND)^2)).
+    """
+    standardized_sq = []
+    for row in rows:
+        xnd = row.get("forecast_sigma")
+        if xnd is None or xnd <= 0:
+            continue
+        standardized_sq.append((row["error"] / xnd) ** 2)
+
+    if not standardized_sq:
+        return None, 0
+
+    scale = math.sqrt(mean(standardized_sq))
+    if not math.isfinite(scale) or scale <= 0:
+        return None, len(standardized_sq)
+    return scale, len(standardized_sq)
+
+
 def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
     train_errors = [row["error"] for row in train]
     bias = mean(train_errors)
@@ -109,6 +131,12 @@ def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
     cover90 = []
     standardized = []
 
+    xnd_scale, xnd_train_n = fit_xnd_scale(train)
+    xnd_raw_log_losses = []
+    xnd_scaled_log_losses = []
+    xnd_scaled_cover90 = []
+    xnd_test_n = 0
+
     for row in test:
         mu = row["forecast"] + bias
         probability = rounded_temperature_probability(row["actual"], mu, sigma)
@@ -128,6 +156,29 @@ def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
         cover80.append(interval_contains(row["actual"], mu, sigma, 0.80))
         cover90.append(interval_contains(row["actual"], mu, sigma, 0.90))
         standardized.append((row["actual"] - mu) / sigma)
+
+        xnd = row.get("forecast_sigma")
+        if xnd is not None and xnd > 0:
+            xnd_test_n += 1
+            raw_xnd_probability = rounded_temperature_probability(
+                row["actual"], row["forecast"], xnd
+            )
+            xnd_raw_log_losses.append(-math.log(raw_xnd_probability))
+
+            if xnd_scale is not None:
+                scaled_sigma = xnd * xnd_scale
+                scaled_probability = rounded_temperature_probability(
+                    row["actual"], row["forecast"], scaled_sigma
+                )
+                xnd_scaled_log_losses.append(-math.log(scaled_probability))
+                xnd_scaled_cover90.append(
+                    interval_contains(
+                        row["actual"],
+                        row["forecast"],
+                        scaled_sigma,
+                        0.90,
+                    )
+                )
 
     return {
         "n_train": len(train),
@@ -150,6 +201,24 @@ def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
         "standardized_error_mean": round(mean(standardized), 4),
         "standardized_error_sd": round(
             pstdev(standardized) if len(standardized) > 1 else 0.0, 4
+        ),
+        "xnd_train_n": xnd_train_n,
+        "xnd_test_n": xnd_test_n,
+        "xnd_scale": None if xnd_scale is None else round(xnd_scale, 6),
+        "mean_raw_xnd_log_loss": (
+            None
+            if not xnd_raw_log_losses
+            else round(mean(xnd_raw_log_losses), 6)
+        ),
+        "mean_scaled_xnd_log_loss": (
+            None
+            if not xnd_scaled_log_losses
+            else round(mean(xnd_scaled_log_losses), 6)
+        ),
+        "scaled_xnd_coverage_90": (
+            None
+            if not xnd_scaled_cover90
+            else round(mean(xnd_scaled_cover90), 4)
         ),
     }
 
@@ -180,8 +249,8 @@ def main():
 
     print(f"Chronological split: train before {test_start}; test on/after {test_start}")
     print()
-    print("lead  train test  bias   sigma  rawRMSE adjRMSE  empLL  zeroNLL biasNLL  cov90")
-    print("----  ----- ----  -----  -----  ------- -------  -----  ------- -------  -----")
+    print("lead  train test  bias  RMSE   empLL zeroNLL  XNDsc XNDLL Xcov90")
+    print("----  ----- ----  ----- -----  ----- -------  ----- ----- ------")
 
     for bucket in buckets:
         train = grouped_train.get(bucket, [])
@@ -194,14 +263,17 @@ def main():
 
         stats = evaluate_bucket(train, test)
         report["buckets"][str(bucket)] = stats
+        xnd_scale = stats["xnd_scale"]
+        xnd_ll = stats["mean_scaled_xnd_log_loss"]
+        xnd_cov = stats["scaled_xnd_coverage_90"]
         print(
             f"{bucket:>4}  {stats['n_train']:>5} {stats['n_test']:>4}  "
-            f"{stats['train_bias_f']:>+5.2f}  {stats['train_sigma_f']:>5.2f}  "
-            f"{stats['test_raw_rmse_f']:>7.2f} {stats['test_corrected_rmse_f']:>7.2f}  "
-            f"{stats['mean_empirical_log_loss']:>5.3f}  "
-            f"{stats['mean_no_bias_normal_log_loss']:>7.3f} "
-            f"{stats['mean_bias_corrected_normal_log_loss']:>7.3f}  "
-            f"{stats['coverage_90']:>5.1%}"
+            f"{stats['train_bias_f']:>+5.2f} {stats['test_raw_rmse_f']:>5.2f}  "
+            f"{stats['mean_empirical_log_loss']:>5.3f} "
+            f"{stats['mean_no_bias_normal_log_loss']:>7.3f}  "
+            f"{'-' if xnd_scale is None else f'{xnd_scale:.2f}':>5} "
+            f"{'-' if xnd_ll is None else f'{xnd_ll:.3f}':>5} "
+            f"{'-' if xnd_cov is None else f'{xnd_cov:.1%}':>6}"
         )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
