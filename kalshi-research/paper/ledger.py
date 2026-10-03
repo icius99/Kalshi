@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS paper_signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at_utc TEXT NOT NULL,
     market_snapshot_utc TEXT NOT NULL,
-    weather_snapshot_utc TEXT NOT NULL,
+    forecast_runtime_utc TEXT NOT NULL,
     event_ticker TEXT NOT NULL,
     market_ticker TEXT NOT NULL,
     side TEXT NOT NULL CHECK(side IN ('YES','NO')),
@@ -21,13 +21,22 @@ CREATE TABLE IF NOT EXISTS paper_signals (
     model_sample_n INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'OPEN',
     settlement_yes INTEGER,
-    gross_pnl REAL,
-    UNIQUE(market_snapshot_utc, market_ticker, side)
+    gross_pnl REAL
 );
+CREATE INDEX IF NOT EXISTS idx_paper_open
+ON paper_signals(status, market_ticker);
 """
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
-    conn.execute(SCHEMA)
+    conn.executescript(SCHEMA)
     return conn
+
+
+def has_open_position(conn: sqlite3.Connection, market_ticker: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM paper_signals WHERE status='OPEN' AND market_ticker=? LIMIT 1",
+        (market_ticker,),
+    ).fetchone()
+    return row is not None
