@@ -1,4 +1,5 @@
 name: price-history-probe
+# Includes archived single-market response inspection.
 on:
   push:
     branches: [research/historical-price-backtest]
