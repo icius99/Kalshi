@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
 from statistics import NormalDist, mean, pstdev
+
+from historical.sampling import load_bucketed_rows
 
 
 DEFAULT_BUCKETS = (12, 24, 36, 48, 60, 72)
@@ -33,35 +34,8 @@ def parse_args():
     return parser.parse_args()
 
 
-def nearest_bucket(lead: float, buckets: tuple[int, ...], max_distance: float):
-    bucket = min(buckets, key=lambda value: abs(value - lead))
-    return bucket if abs(bucket - lead) <= max_distance else None
-
-
 def load_rows(path: Path, buckets: tuple[int, ...], max_distance: float):
-    rows = []
-    with path.open(newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            try:
-                target = date.fromisoformat(row["target_date"])
-                lead = float(row["lead_hours"])
-                forecast = float(row["forecast_high_f"])
-                actual = float(row["actual_high_f"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            bucket = nearest_bucket(lead, buckets, max_distance)
-            if bucket is None:
-                continue
-            rows.append(
-                {
-                    "target_date": target,
-                    "lead_bucket": bucket,
-                    "forecast": forecast,
-                    "actual": actual,
-                    "error": actual - forecast,
-                }
-            )
-    return rows
+    return load_bucketed_rows(path, buckets, max_distance)
 
 
 def choose_test_start(rows: list[dict], explicit: date | None, train_fraction: float) -> date:

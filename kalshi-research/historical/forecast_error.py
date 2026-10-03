@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 from collections import defaultdict
 from pathlib import Path
 from statistics import NormalDist, mean, pstdev
+
+from historical.sampling import load_bucketed_rows
 
 DEFAULT_BUCKETS = (12, 24, 36, 48, 60, 72)
 
@@ -24,23 +25,10 @@ def parse_args():
     return parser.parse_args()
 
 
-def nearest_bucket(lead: float, buckets: tuple[int, ...], max_distance: float) -> int | None:
-    bucket = min(buckets, key=lambda x: abs(x - lead))
-    return bucket if abs(bucket - lead) <= max_distance else None
-
-
 def load_errors(path: Path, buckets: tuple[int, ...], max_distance: float):
     grouped = defaultdict(list)
-    with path.open(newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            try:
-                lead = float(row["lead_hours"])
-                error = float(row["error_f"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            bucket = nearest_bucket(lead, buckets, max_distance)
-            if bucket is not None and math.isfinite(error):
-                grouped[bucket].append(error)
+    for row in load_bucketed_rows(path, buckets, max_distance):
+        grouped[row["lead_bucket"]].append(row["error"])
     return grouped
 
 
