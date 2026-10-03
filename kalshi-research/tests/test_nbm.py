@@ -1,5 +1,5 @@
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from historical.build_nbm_history import extract_daily_high_forecasts
 from research.nbm import select_forecast_asof
@@ -35,6 +35,35 @@ class NBMSelectionTests(unittest.TestCase):
         self.assertEqual(selected["forecast_high_f"], 66.0)
         self.assertEqual(selected["runtime_utc"].hour, 18)
         self.assertEqual(selected["target_date"], date(2026, 10, 4))
+
+    def test_publication_lag_blocks_too_fresh_cycle(self):
+        rows = [
+            {
+                "runtime": "2026-10-03T12:00:00Z",
+                "ftime": "2026-10-05T00:00:00Z",
+                "txn": "65",
+                "xnd": "2",
+            },
+            {
+                "runtime": "2026-10-03T18:00:00Z",
+                "ftime": "2026-10-05T00:00:00Z",
+                "txn": "66",
+                "xnd": "2",
+            },
+        ]
+        selected = select_forecast_asof(
+            rows,
+            date(2026, 10, 4),
+            datetime(2026, 10, 3, 18, 30, tzinfo=timezone.utc),
+        )
+        self.assertEqual(selected["runtime_utc"].hour, 12)
+
+        selected = select_forecast_asof(
+            rows,
+            date(2026, 10, 4),
+            datetime(2026, 10, 3, 19, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(selected["runtime_utc"].hour, 18)
 
     def test_12z_txn_is_minimum_and_ignored(self):
         rows = [
