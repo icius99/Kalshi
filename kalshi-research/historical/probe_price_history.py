@@ -47,14 +47,23 @@ def probe_event(event_ticker: str, asof: datetime):
                 print("sample",ticker,json.dumps(arr[-1],indent=2)[:2000])
                 break
 
-    if markets:
-        ticker=markets[0]["ticker"]
+    historical_markets=get(
+        "/historical/markets",
+        {"event_ticker":event_ticker,"limit":1000},
+    )
+    archived=(historical_markets or {}).get("markets") or []
+    print("archived markets",len(archived))
+    if archived:
+        ticker=archived[0]["ticker"]
         hist=get(
             f"/historical/markets/{ticker}/candlesticks",
             {"start_ts":start,"end_ts":end,"period_interval":60},
         )
         if hist:
-            print("historical single",ticker,"candles",len(hist.get("candlesticks") or []))
+            arr=hist.get("candlesticks") or []
+            print("historical single",ticker,"candles",len(arr))
+            if arr:
+                print("historical sample",json.dumps(arr[-1],indent=2)[:2000])
 
 
 def main():
