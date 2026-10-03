@@ -79,3 +79,53 @@ data/models/nbm_error_model.json
   Kalshi temperature buckets and measures edge against executable asks.
 - Add raw archived NDFD as a second independent model, not as a dependency of
   this baseline.
+
+
+## Live IEM schema smoke test
+
+Before starting a multi-year download, verify that IEM's live/archive CSV schema
+still matches the parser assumptions:
+
+```bash
+python -m historical.probe_iem --date 2026-09-25
+```
+
+The probe is intentionally tiny. It prints the returned MOS and daily-climate
+column names, counts rows with `TXN`, shows one `TXN/XND` sample, and exits
+non-zero if required fields are missing.
+
+## Chronological out-of-sample validation
+
+After building the historical dataset, validate without fitting on the test
+period:
+
+```bash
+python -m historical.validate_chronological \
+  data/historical/nbm_nyc_daily_high.csv
+```
+
+By default the earliest 75% of distinct target dates are used for training and
+the latest 25% are held out. You can freeze a specific cutoff instead:
+
+```bash
+python -m historical.validate_chronological \
+  data/historical/nbm_nyc_daily_high.csv \
+  --test-start 2025-01-01
+```
+
+The report includes raw/corrected RMSE, probabilistic log score, and 50/80/90%
+interval coverage for each lead-time bucket. A useful model should not merely
+reduce RMSE; its uncertainty should also be reasonably calibrated. Persistent
+under-coverage means the model is overconfident and should not be used to infer
+market edge.
+
+## Fee-aware paper signals
+
+As of the July 7, 2026 general Kalshi fee schedule, standard event-contract
+taker fees are modeled as `0.07 * C * P * (1-P)`, rounded up to the next cent
+for the batch. KXHIGHNY is not listed as a non-standard series in that schedule.
+Paper-signal edge therefore subtracts both the modeled taker fee and a separate
+configurable slippage/execution reserve.
+
+The fee schedule can change; verify the active Kalshi fee schedule before any
+real-money use.
