@@ -14,7 +14,7 @@ from statistics import NormalDist, mean, pstdev
 from historical.sampling import load_bucketed_rows
 
 
-DEFAULT_BUCKETS = (12, 24, 36, 48, 60, 72)
+DEFAULT_BUCKETS = (12, 24, 36, 48, 60)
 
 
 def parse_args():
