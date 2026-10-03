@@ -39,7 +39,7 @@ def bucket_from_market(ticker: str, floor_strike, cap_strike) -> TemperatureBuck
 def probabilities_for_markets(markets: list[dict], mean_f: float, sigma_f: float) -> dict[str, float]:
     if sigma_f <= 0:
         raise ValueError("sigma_f must be positive")
-    dist = NormalDist(mean=mean_f, stdev=sigma_f)
+    dist = NormalDist(mu=mean_f, sigma=sigma_f)
     result = {}
     for market in markets:
         bucket = bucket_from_market(
