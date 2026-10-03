@@ -38,6 +38,45 @@ class SettlementBasisTests(unittest.TestCase):
         self.assertTrue(result["usable"])
         self.assertFalse(result["same_bucket"])
 
+
+    def test_rejects_gapped_partition(self):
+        markets = event_markets()
+        markets = [
+            market for market in markets
+            if not market["ticker"].endswith("B67.5")
+        ]
+        result = classify_event(markets, 69)
+        self.assertFalse(result["usable"])
+        self.assertEqual(result["reason"], "gapped_partition")
+
+    def test_rejects_overlapping_legacy_thresholds(self):
+        event = "HIGHNY-22DEC01"
+        markets = [
+            {
+                "ticker": f"{event}-T60",
+                "event_ticker": event,
+                "cap_strike": 60,
+                "floor_strike": None,
+                "result": "no",
+            },
+            {
+                "ticker": f"{event}-T65",
+                "event_ticker": event,
+                "cap_strike": 65,
+                "floor_strike": None,
+                "result": "yes",
+            },
+            {
+                "ticker": f"{event}-T70",
+                "event_ticker": event,
+                "cap_strike": 70,
+                "floor_strike": None,
+                "result": "no",
+            },
+        ]
+        result = classify_event(markets, 64)
+        self.assertFalse(result["usable"])
+
     def test_run_audit_reports_mismatch(self):
         markets = event_markets()
         for market in markets:
