@@ -45,7 +45,7 @@ def parse_args():
     )
     parser.add_argument("--min-qty", type=float, default=10.0)
     parser.add_argument("--max-contracts", type=int, default=25)
-    parser.add_argument("--max-model-distance", type=float, default=8.0)
+    parser.add_argument("--max-model-distance", type=float, default=6.0)
     parser.add_argument("--anchor-hour", type=int, default=15)
     return parser.parse_args()
 
