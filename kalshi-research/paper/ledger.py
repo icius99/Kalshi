@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS paper_signals (
     side TEXT NOT NULL CHECK(side IN ('YES','NO')),
     entry_price REAL NOT NULL,
     quantity REAL NOT NULL,
+    entry_fee REAL NOT NULL DEFAULT 0,
     model_probability_yes REAL NOT NULL,
     estimated_edge REAL NOT NULL,
     lead_hours REAL NOT NULL,
@@ -21,16 +22,33 @@ CREATE TABLE IF NOT EXISTS paper_signals (
     model_sample_n INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'OPEN',
     settlement_yes INTEGER,
-    gross_pnl REAL
+    gross_pnl REAL,
+    net_pnl REAL
 );
 CREATE INDEX IF NOT EXISTS idx_paper_open
 ON paper_signals(status, market_ticker);
 """
 
 
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(paper_signals)").fetchall()
+    }
+    if "entry_fee" not in columns:
+        conn.execute(
+            "ALTER TABLE paper_signals ADD COLUMN entry_fee REAL NOT NULL DEFAULT 0"
+        )
+    if "net_pnl" not in columns:
+        conn.execute(
+            "ALTER TABLE paper_signals ADD COLUMN net_pnl REAL"
+        )
+
+
 def connect(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA)
+    _ensure_columns(conn)
     return conn
 
 

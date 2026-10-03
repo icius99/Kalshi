@@ -19,15 +19,15 @@ def parse_args():
     )
     parser.add_argument("--event")
     parser.add_argument("--min-edge", type=float, default=0.05)
-    parser.add_argument("--execution-buffer", type=float, default=0.01)
+    parser.add_argument("--execution-buffer", type=float, default=0.005)
     parser.add_argument("--min-qty", type=float, default=10.0)
     parser.add_argument("--max-model-distance", type=float, default=8.0)
     parser.add_argument("--anchor-hour", type=int, default=15)
     parser.add_argument("--ledger", type=Path, default=Path("paper.db"))
     parser.add_argument(
         "--max-contracts",
-        type=float,
-        default=25.0,
+        type=int,
+        default=25,
         help="Cap paper position size even when more top-of-book liquidity is displayed.",
     )
     return parser.parse_args()
@@ -43,7 +43,7 @@ def main():
         if has_open_position(conn, signal.market_ticker):
             continue
 
-        quantity = min(float(args.max_contracts), signal.available_qty)
+        quantity = signal.quantity
         if quantity <= 0:
             continue
 
@@ -58,12 +58,13 @@ def main():
                 side,
                 entry_price,
                 quantity,
+                entry_fee,
                 model_probability_yes,
                 estimated_edge,
                 lead_hours,
                 model_lead_bucket,
                 model_sample_n
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(),
@@ -74,6 +75,7 @@ def main():
                 signal.side,
                 signal.entry_price,
                 quantity,
+                signal.fee_total,
                 signal.model_probability_yes,
                 signal.estimated_edge,
                 result["lead_hours"],
@@ -85,7 +87,7 @@ def main():
         print(
             f"PAPER BUY {signal.side} {signal.market_ticker}: "
             f"{quantity:g} @ {signal.entry_price:.2f}, "
-            f"estimated edge {signal.estimated_edge:.1%}"
+            f"fee={signal.fee_total:.2f}, net estimated edge {signal.estimated_edge:.1%}"
         )
 
     conn.commit()

@@ -37,8 +37,14 @@ def parse_args():
         help="Event ticker; defaults to the nearest current/future KXHIGHNY event.",
     )
     parser.add_argument("--min-edge", type=float, default=0.05)
-    parser.add_argument("--execution-buffer", type=float, default=0.01)
+    parser.add_argument(
+        "--execution-buffer",
+        type=float,
+        default=0.005,
+        help="Per-contract slippage/uncertainty reserve, separate from modeled taker fees.",
+    )
     parser.add_argument("--min-qty", type=float, default=10.0)
+    parser.add_argument("--max-contracts", type=int, default=25)
     parser.add_argument("--max-model-distance", type=float, default=8.0)
     parser.add_argument("--anchor-hour", type=int, default=15)
     return parser.parse_args()
@@ -107,9 +113,7 @@ def build_evaluation(args):
         anchor.astimezone(timezone.utc) - snapshot_dt
     ).total_seconds() / 3600.0
 
-    nbm = fetch_forecast_asof(
-        target, snapshot_dt, anchor_hour=args.anchor_hour
-    )
+    nbm = fetch_forecast_asof(target, snapshot_dt, anchor_hour=args.anchor_hour)
     forecast_high = float(nbm["forecast_high_f"])
 
     model = ForecastErrorModel.load(args.model)
@@ -123,6 +127,7 @@ def build_evaluation(args):
         args.min_edge,
         args.execution_buffer,
         args.min_qty,
+        args.max_contracts,
     )
 
     return {
@@ -160,7 +165,7 @@ def main():
     )
     print()
     print("bucket    model    bid/ask   ask qty   best signal")
-    print("--------  -------  --------  --------  ----------------")
+    print("--------  -------  --------  --------  ------------------------------")
 
     signals_by_market = {}
     for signal in result["signals"]:
@@ -192,7 +197,10 @@ def main():
         signal_text = (
             ""
             if signal is None
-            else f"BUY {signal.side} edge={signal.estimated_edge:.1%}"
+            else (
+                f"BUY {signal.side} x{signal.quantity} "
+                f"fee={signal.fee_total:.2f} net-edge={signal.estimated_edge:.1%}"
+            )
         )
         print(
             f"{bucket.label:<8}  {probability:7.1%}  {spread:<8}  "
@@ -201,8 +209,8 @@ def main():
 
     print()
     print(
-        "Edge includes the configured execution buffer, "
-        "but exact Kalshi fees are not yet modeled."
+        "Signal edge is net of the standard KXHIGHNY taker fee and the "
+        "configured execution/slippage buffer."
     )
 
 
