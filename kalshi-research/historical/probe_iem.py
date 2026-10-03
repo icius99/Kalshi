@@ -14,6 +14,7 @@ from historical.build_nbm_history import (
     IEM_DAILY,
     IEM_MOS,
     USER_AGENT,
+    _parse_datetime,
     _pick,
     fetch_csv,
 )
@@ -82,10 +83,29 @@ def main():
     print(f"Rows: {len(mos_rows):,}")
 
     txn_rows = [row for row in mos_rows if _pick(row, "txn") not in (None, "", "M")]
+    max_rows = []
+    min_rows = []
+    other_rows = []
+
+    for row in txn_rows:
+        valid = _parse_datetime(_pick(row, *MOS_REQUIRED_ALIASES["valid"]))
+        if valid is None:
+            other_rows.append(row)
+        elif valid.hour == 0 and valid.minute == 0:
+            max_rows.append(row)
+        elif valid.hour == 12 and valid.minute == 0:
+            min_rows.append(row)
+        else:
+            other_rows.append(row)
+
     print(f"Rows with TXN: {len(txn_rows):,}")
-    if txn_rows:
-        sample = txn_rows[0]
-        print("TXN sample:")
+    print(f"  00Z maximum rows: {len(max_rows):,}")
+    print(f"  12Z minimum rows: {len(min_rows):,}")
+    print(f"  other valid times: {len(other_rows):,}")
+
+    sample = max_rows[0] if max_rows else (txn_rows[0] if txn_rows else None)
+    if sample:
+        print("TXN maximum sample:" if max_rows else "TXN sample:")
         print(f"  runtime={_pick(sample, *MOS_REQUIRED_ALIASES['runtime'])}")
         print(f"  valid={_pick(sample, *MOS_REQUIRED_ALIASES['valid'])}")
         print(f"  txn={_pick(sample, 'txn')}")
