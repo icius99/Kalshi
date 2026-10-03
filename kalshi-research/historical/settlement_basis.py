@@ -135,13 +135,9 @@ def fetch_all_settled_markets(session: requests.Session) -> list[dict]:
     return list(combined.values())
 
 
-def classify_event(markets: list[dict], actual_high: float) -> dict:
-    winners = [market for market in markets if market.get("result") == "yes"]
-    if len(winners) != 1:
-        return {"usable": False, "reason": f"{len(winners)}_yes_winners"}
-
-    bucket_markets = []
-    matching = []
+def event_partition(markets: list[dict]):
+    """Return sorted temperature buckets if markets form one exhaustive partition."""
+    parsed = []
     try:
         for market in markets:
             bucket = bucket_from_market(
@@ -149,26 +145,53 @@ def classify_event(markets: list[dict], actual_high: float) -> dict:
                 market.get("floor_strike"),
                 market.get("cap_strike"),
             )
-            bucket_markets.append((market, bucket))
-            if bucket.lower <= actual_high <= bucket.upper:
-                matching.append((market, bucket))
+            parsed.append((market, bucket))
     except (KeyError, TypeError, ValueError):
-        return {"usable": False, "reason": "non_temperature_bucket"}
+        return None, "non_temperature_bucket"
 
-    # This also filters legacy threshold-style events whose contracts overlap.
+    if not parsed:
+        return None, "empty_event"
+
+    parsed.sort(key=lambda item: item[1].lower)
+    if parsed[0][1].lower != float("-inf"):
+        return None, "not_exhaustive_partition"
+    if parsed[-1][1].upper != float("inf"):
+        return None, "not_exhaustive_partition"
+
+    for (_, previous), (_, current) in zip(parsed, parsed[1:]):
+        if previous.upper == float("inf"):
+            return None, "overlapping_partition"
+        if abs(current.lower - (previous.upper + 1.0)) > 1e-9:
+            if current.lower <= previous.upper:
+                return None, "overlapping_partition"
+            return None, "gapped_partition"
+
+    return parsed, None
+
+
+def classify_event(markets: list[dict], actual_high: float) -> dict:
+    partition, reason = event_partition(markets)
+    if partition is None:
+        return {"usable": False, "reason": reason}
+
+    winners = [market for market in markets if market.get("result") == "yes"]
+    if len(winners) != 1:
+        return {"usable": False, "reason": f"{len(winners)}_yes_winners"}
+
+    matching = [
+        (market, bucket)
+        for market, bucket in partition
+        if bucket.lower <= actual_high <= bucket.upper
+    ]
     if len(matching) != 1:
-        return {
-            "usable": False,
-            "reason": f"{len(matching)}_cli_bucket_matches",
-        }
+        # An exhaustive integer partition should make this impossible.
+        return {"usable": False, "reason": f"{len(matching)}_cli_bucket_matches"}
 
     winner = winners[0]
     cli_market, cli_bucket = matching[0]
-
-    winner_bucket = bucket_from_market(
-        winner["ticker"],
-        winner.get("floor_strike"),
-        winner.get("cap_strike"),
+    winner_bucket = next(
+        bucket for market, bucket in partition
+        if market["ticker"] == winner["ticker"]
     )
 
     same = winner["ticker"] == cli_market["ticker"]
@@ -250,6 +273,17 @@ def run_audit(
     matches = sum(1 for row in rows if row["same_bucket"])
     mismatches = [row for row in rows if not row["same_bucket"]]
 
+    by_year = {}
+    for year in sorted({int(row["date"][:4]) for row in rows}):
+        year_rows = [row for row in rows if int(row["date"][:4]) == year]
+        year_matches = sum(1 for row in year_rows if row["same_bucket"])
+        by_year[str(year)] = {
+            "usable_events": len(year_rows),
+            "same_bucket_events": year_matches,
+            "mismatch_events": len(year_rows) - year_matches,
+            "same_bucket_rate": year_matches / len(year_rows),
+        }
+
     distance_counts = Counter(
         str(abs(int(row["degrees_to_winning_bucket"])))
         if float(row["degrees_to_winning_bucket"]).is_integer()
@@ -266,6 +300,10 @@ def run_audit(
         "same_bucket_events": matches,
         "mismatch_events": len(mismatches),
         "same_bucket_rate": (matches / len(rows)) if rows else None,
+        "usable_date_range": (
+            [rows[0]["date"], rows[-1]["date"]] if rows else None
+        ),
+        "by_year": by_year,
         "skipped": dict(sorted(skipped.items())),
         "mismatch_distance_counts_f": dict(sorted(distance_counts.items())),
         "mismatches": mismatches,
@@ -280,6 +318,13 @@ def print_report(report: dict):
     print(f"Mismatches: {report['mismatch_events']:,}")
     rate = report["same_bucket_rate"]
     print(f"Bucket agreement: {rate:.2%}" if rate is not None else "Bucket agreement: n/a")
+    print(f"Usable date range: {report['usable_date_range']}")
+    print("By year:")
+    for year, stats in report["by_year"].items():
+        print(
+            f"  {year}: n={stats['usable_events']} "
+            f"agreement={stats['same_bucket_rate']:.2%}"
+        )
     print(f"Skipped: {report['skipped']}")
     print(f"Mismatch distance from winning bucket (F): {report['mismatch_distance_counts_f']}")
 
