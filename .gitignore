@@ -1,0 +1,15 @@
+# Local runtime data and Python artifacts
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Research outputs are reproducible and should stay local.
+kalshi-research/data/**
+!kalshi-research/data/
+!kalshi-research/data/**/
+!kalshi-research/data/**/README.md
