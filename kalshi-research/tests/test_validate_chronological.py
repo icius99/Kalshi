@@ -4,6 +4,7 @@ from datetime import date
 from historical.validate_chronological import (
     choose_test_start,
     evaluate_bucket,
+    fit_xnd_scale,
     rounded_temperature_probability,
 )
 
@@ -32,6 +33,32 @@ class ChronologicalValidationTests(unittest.TestCase):
         stats = evaluate_bucket(train, test)
         self.assertAlmostEqual(stats["train_bias_f"], 1.0)
         self.assertAlmostEqual(stats["test_corrected_bias_f"], 0.0)
+
+    def test_fit_xnd_scale_uses_training_errors_only(self):
+        rows = [
+            {"error": 2.0, "forecast_sigma": 2.0},
+            {"error": -4.0, "forecast_sigma": 2.0},
+        ]
+        scale, n = fit_xnd_scale(rows)
+        self.assertEqual(n, 2)
+        self.assertAlmostEqual(scale, (2.5) ** 0.5)
+
+    def test_evaluate_bucket_scores_xnd_holdout(self):
+        train = [
+            {"forecast": 60.0, "actual": 61.0, "error": 1.0, "forecast_sigma": 1.0},
+            {"forecast": 65.0, "actual": 63.0, "error": -2.0, "forecast_sigma": 2.0},
+            {"forecast": 70.0, "actual": 71.0, "error": 1.0, "forecast_sigma": 1.0},
+        ]
+        test = [
+            {"forecast": 60.0, "actual": 61.0, "error": 1.0, "forecast_sigma": 1.0},
+            {"forecast": 70.0, "actual": 68.0, "error": -2.0, "forecast_sigma": 2.0},
+        ]
+        stats = evaluate_bucket(train, test)
+        self.assertEqual(stats["xnd_train_n"], 3)
+        self.assertEqual(stats["xnd_test_n"], 2)
+        self.assertIsNotNone(stats["xnd_scale"])
+        self.assertIsNotNone(stats["mean_scaled_xnd_log_loss"])
+        self.assertIsNotNone(stats["scaled_xnd_coverage_90"])
 
 
 if __name__ == "__main__":
