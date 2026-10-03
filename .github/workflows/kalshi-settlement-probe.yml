@@ -1,4 +1,5 @@
 name: kalshi-settlement-basis-smoke
+# Strict exhaustive-partition validation enabled.
 
 on:
   push:
