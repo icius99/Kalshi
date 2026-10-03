@@ -109,18 +109,21 @@ def build_evaluation(args):
     target = event_date(event)
     snapshot_dt = datetime.fromisoformat(market_timestamp).astimezone(timezone.utc)
     anchor = datetime.combine(target, time(args.anchor_hour), tzinfo=NY)
-    lead_hours = (
+    market_lead_hours = (
         anchor.astimezone(timezone.utc) - snapshot_dt
     ).total_seconds() / 3600.0
 
     nbm = fetch_forecast_asof(target, snapshot_dt, anchor_hour=args.anchor_hour)
     forecast_high = float(nbm["forecast_high_f"])
+    forecast_lead_hours = (
+        anchor.astimezone(timezone.utc) - nbm["runtime_utc"]
+    ).total_seconds() / 3600.0
 
     model = ForecastErrorModel.load(args.model)
     fit, probabilities = model.probabilities_for_markets(
         markets,
         forecast_high,
-        lead_hours,
+        forecast_lead_hours,
         args.max_model_distance,
     )
     signals = evaluate_probabilities(
@@ -139,7 +142,8 @@ def build_evaluation(args):
         "markets": markets,
         "nbm": nbm,
         "forecast_high": forecast_high,
-        "lead_hours": lead_hours,
+        "lead_hours": market_lead_hours,
+        "forecast_lead_hours": forecast_lead_hours,
         "fit": fit,
         "probs": probabilities,
         "signals": signals,
@@ -157,7 +161,8 @@ def main():
     print(f"NBM runtime:     {nbm['runtime_utc'].isoformat()}")
     print(f"NBM high:        {result['forecast_high']:.1f} F")
     print(
-        f"Lead:            {result['lead_hours']:.1f} h -> "
+        f"Market lead:     {result['lead_hours']:.1f} h; "
+        f"NBM forecast lead={result['forecast_lead_hours']:.1f} h -> "
         f"{fit.lead_hours} h error bucket (n={fit.n})"
     )
     print(
