@@ -48,9 +48,11 @@ python -m historical.forecast_error \
   data/historical/nbm_nyc_daily_high.csv
 ```
 
-This bins forecasts by lead time (12/24/36/48/60/72 hours by default) and
-reports bias, error standard deviation, MAE, RMSE, and 90th-percentile absolute
-error. The JSON model is written to:
+This selects one forecast per target date for each nominal 12/24/36/48/60-hour
+lead, then stores both summary statistics and the full integer-Fahrenheit error
+histogram. The empirical histogram is the live probability baseline; historical
+mean bias is retained as diagnostics but is not applied to the current NBM
+forecast. The JSON model is written to:
 
 ```
 data/models/nbm_error_model.json
@@ -130,3 +132,23 @@ configurable slippage/execution reserve.
 
 The fee schedule can change; verify the active Kalshi fee schedule before any
 real-money use.
+
+
+## Empirical baseline decision
+
+A chronological 2021-2026 holdout comparison found that the empirical integer
+residual distribution improved exact-temperature log loss at 12h and 24h,
+essentially tied the unshifted normal at 36h, improved at 48h, and was only
+slightly worse at 60h. Applying the training-period mean bias worsened holdout
+RMSE at every tested horizon.
+
+Accordingly the default live model:
+
+- uses the empirical historical error distribution;
+- applies light Laplace smoothing to avoid zero-probability tails;
+- does **not** shift today's NBM forecast by the historical mean error;
+- supports 12-60h nominal leads by default;
+- refuses to stretch the nearest calibration by more than six hours.
+
+The 72h bucket remains available for research but is excluded from the default
+model because the historical archive had materially thinner coverage there.
