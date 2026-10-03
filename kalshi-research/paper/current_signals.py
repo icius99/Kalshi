@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from research.error_model import ForecastErrorModel
 from research.nbm import fetch_forecast_asof
-from research.signals import evaluate_markets
+from research.signals import evaluate_probabilities
 from research.temperature import bucket_from_market
 
 NY = ZoneInfo("America/New_York")
@@ -117,13 +117,15 @@ def build_evaluation(args):
     forecast_high = float(nbm["forecast_high_f"])
 
     model = ForecastErrorModel.load(args.model)
-    fit = model.nearest(lead_hours, args.max_model_distance)
-    model_mean = forecast_high + fit.bias_f
-
-    probabilities, signals = evaluate_markets(
+    fit, probabilities = model.probabilities_for_markets(
         markets,
-        model_mean,
-        fit.sigma_f,
+        forecast_high,
+        lead_hours,
+        args.max_model_distance,
+    )
+    signals = evaluate_probabilities(
+        markets,
+        probabilities,
         args.min_edge,
         args.execution_buffer,
         args.min_qty,
@@ -139,7 +141,6 @@ def build_evaluation(args):
         "forecast_high": forecast_high,
         "lead_hours": lead_hours,
         "fit": fit,
-        "model_mean": model_mean,
         "probs": probabilities,
         "signals": signals,
     }
@@ -160,8 +161,9 @@ def main():
         f"{fit.lead_hours} h error bucket (n={fit.n})"
     )
     print(
-        f"Model:           mean={result['model_mean']:.2f} F "
-        f"sigma={fit.sigma_f:.2f} F"
+        f"Model:           empirical integer-error distribution; "
+        f"RMSE={fit.rmse_f:.2f} F, historical bias={fit.bias_f:+.2f} F "
+        f"(bias not applied)"
     )
     print()
     print("bucket    model    bid/ask   ask qty   best signal")
