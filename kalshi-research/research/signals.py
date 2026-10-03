@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
+from research.fees import STANDARD_TAKER_RATE, taker_fee
 from research.temperature import probabilities_for_markets
 
 
@@ -11,7 +13,9 @@ class Signal:
     side: str
     entry_price: float
     available_qty: float
+    quantity: int
     model_probability_yes: float
+    fee_total: float
     estimated_edge: float
 
 
@@ -22,32 +26,51 @@ def evaluate_markets(
     min_edge: float = 0.05,
     execution_buffer: float = 0.01,
     min_qty: float = 10.0,
+    max_contracts: int = 25,
+    taker_rate: float = STANDARD_TAKER_RATE,
 ) -> tuple[dict[str, float], list[Signal]]:
     probs = probabilities_for_markets(markets, model_mean_f, model_sigma_f)
     signals: list[Signal] = []
 
     for market in markets:
         ticker = market["market_ticker"]
-        p = probs[ticker]
+        probability_yes = probs[ticker]
         ask = market.get("yes_ask")
         bid = market.get("yes_bid")
-        yes_qty = float(market.get("yes_ask_qty") or 0.0)
-        no_qty = float(market.get("yes_bid_qty") or 0.0)
+        yes_available = float(market.get("yes_ask_qty") or 0.0)
+        no_available = float(market.get("yes_bid_qty") or 0.0)
+
+        def consider(side: str, price: float, available: float, outcome_probability: float):
+            if available < min_qty:
+                return
+            quantity = min(int(max_contracts), math.floor(available))
+            if quantity < max(1, math.ceil(min_qty)):
+                return
+
+            fee = taker_fee(price, quantity, taker_rate)
+            fee_per_contract = fee / quantity
+            edge = outcome_probability - price - execution_buffer - fee_per_contract
+
+            if edge >= min_edge:
+                signals.append(
+                    Signal(
+                        ticker,
+                        side,
+                        price,
+                        available,
+                        quantity,
+                        probability_yes,
+                        fee,
+                        edge,
+                    )
+                )
 
         if ask is not None:
-            yes_edge = p - float(ask) - execution_buffer
-            if yes_edge >= min_edge and yes_qty >= min_qty:
-                signals.append(
-                    Signal(ticker, "YES", float(ask), yes_qty, p, yes_edge)
-                )
+            consider("YES", float(ask), yes_available, probability_yes)
 
         if bid is not None:
             no_ask = 1.0 - float(bid)
-            no_edge = (1.0 - p) - no_ask - execution_buffer
-            if no_edge >= min_edge and no_qty >= min_qty:
-                signals.append(
-                    Signal(ticker, "NO", no_ask, no_qty, p, no_edge)
-                )
+            consider("NO", no_ask, no_available, 1.0 - probability_yes)
 
     signals.sort(key=lambda item: item.estimated_edge, reverse=True)
     return probs, signals

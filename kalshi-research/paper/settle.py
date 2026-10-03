@@ -40,6 +40,16 @@ def gross_pnl(side: str, entry_price: float, quantity: float, settlement_yes: in
     return (float(payout) - entry_price) * quantity
 
 
+def net_pnl(
+    side: str,
+    entry_price: float,
+    quantity: float,
+    settlement_yes: int,
+    entry_fee: float,
+) -> float:
+    return gross_pnl(side, entry_price, quantity, settlement_yes) - entry_fee
+
+
 def main():
     args = parse_args()
     conn = connect(args.ledger)
@@ -60,24 +70,30 @@ def main():
         if outcome is None:
             continue
 
-        pnl = gross_pnl(
+        gross = gross_pnl(
             row["side"],
             float(row["entry_price"]),
             float(row["quantity"]),
             outcome,
         )
+        net = gross - float(row["entry_fee"] or 0.0)
+
         conn.execute(
             """
             UPDATE paper_signals
-            SET status='SETTLED', settlement_yes=?, gross_pnl=?
+            SET status='SETTLED',
+                settlement_yes=?,
+                gross_pnl=?,
+                net_pnl=?
             WHERE id=?
             """,
-            (outcome, pnl, row["id"]),
+            (outcome, gross, net, row["id"]),
         )
         settled += 1
         print(
             f"SETTLED {row['market_ticker']} {row['side']}: "
-            f"YES={outcome}, gross P&L {pnl:+.2f}"
+            f"YES={outcome}, gross={gross:+.2f}, "
+            f"fee={float(row['entry_fee'] or 0):.2f}, net={net:+.2f}"
         )
 
     conn.commit()

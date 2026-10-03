@@ -20,7 +20,7 @@ def main():
     rows = conn.execute(
         """
         SELECT id,event_ticker,market_ticker,side,entry_price,quantity,
-               estimated_edge,lead_hours,status,gross_pnl
+               entry_fee,estimated_edge,lead_hours,status,gross_pnl,net_pnl
         FROM paper_signals ORDER BY id
         """
     ).fetchall()
@@ -30,27 +30,33 @@ def main():
         conn.close()
         return
 
-    print("id  side  price  qty    edge    lead   status    pnl     market")
-    print("--  ----  -----  -----  ------  ------  --------  ------  --------------------------")
+    print("id  side  price  qty    fee   edge    lead   status    net pnl  market")
+    print("--  ----  -----  -----  ----  ------  ------  --------  -------  --------------------------")
     for row in rows:
-        pnl = "-" if row["gross_pnl"] is None else f"{row['gross_pnl']:+.2f}"
+        pnl = "-" if row["net_pnl"] is None else f"{row['net_pnl']:+.2f}"
         print(
             f"{row['id']:>2}  {row['side']:<4}  {row['entry_price']:.2f}   "
-            f"{row['quantity']:>5.1f}  {row['estimated_edge']:>6.1%}  "
-            f"{row['lead_hours']:>6.1f}  {row['status']:<8}  {pnl:>6}  "
-            f"{row['market_ticker']}"
+            f"{row['quantity']:>5.1f}  {row['entry_fee']:>4.2f}  "
+            f"{row['estimated_edge']:>6.1%}  {row['lead_hours']:>6.1f}  "
+            f"{row['status']:<8}  {pnl:>7}  {row['market_ticker']}"
         )
 
-    closed = [row for row in rows if row["gross_pnl"] is not None]
+    closed = [row for row in rows if row["net_pnl"] is not None]
     if closed:
-        total_pnl = sum(row["gross_pnl"] for row in closed)
-        total_cost = sum(row["entry_price"] * row["quantity"] for row in closed)
-        roi = total_pnl / total_cost if total_cost else 0.0
+        gross_total = sum(row["gross_pnl"] for row in closed)
+        fee_total = sum(row["entry_fee"] for row in closed)
+        net_total = sum(row["net_pnl"] for row in closed)
+        capital = sum(
+            row["entry_price"] * row["quantity"] + row["entry_fee"]
+            for row in closed
+        )
+        roi = net_total / capital if capital else 0.0
         print()
         print(f"Closed positions: {len(closed)}")
-        print("Gross P&L:        " + f"{total_pnl:+.2f}")
-        print(f"Gross ROI:        {roi:+.1%}")
-        print("Gross means before exact Kalshi fees.")
+        print(f"Gross P&L:        {gross_total:+.2f}")
+        print(f"Entry fees:       {fee_total:.2f}")
+        print(f"Net P&L:          {net_total:+.2f}")
+        print(f"Net ROI:          {roi:+.1%}")
 
     conn.close()
 

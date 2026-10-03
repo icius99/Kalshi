@@ -1,6 +1,6 @@
 import unittest
 
-from paper.settle import gross_pnl, settlement_yes_from_market
+from paper.settle import gross_pnl, net_pnl, settlement_yes_from_market
 
 
 class SettlementTests(unittest.TestCase):
@@ -17,6 +17,9 @@ class SettlementTests(unittest.TestCase):
         self.assertAlmostEqual(gross_pnl("YES", 0.25, 10, 1), 7.5)
         self.assertAlmostEqual(gross_pnl("YES", 0.25, 10, 0), -2.5)
         self.assertAlmostEqual(gross_pnl("NO", 0.30, 10, 0), 7.0)
+
+    def test_net_pnl_subtracts_entry_fee(self):
+        self.assertAlmostEqual(net_pnl("YES", 0.25, 10, 1, 0.14), 7.36)
 
 
 if __name__ == "__main__":
