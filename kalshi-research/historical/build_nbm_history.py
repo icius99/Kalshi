@@ -156,6 +156,31 @@ def fetch_csv(
     return rows
 
 
+def parse_cli_observations(
+    rows: list[dict[str, str]],
+    start: date,
+    end: date,
+) -> dict[date, float]:
+    """Convert parsed NWS CLI CSV rows into target-date daily highs."""
+    observations: dict[date, float] = {}
+
+    for row in rows:
+        day_text = _pick(row, "valid")
+        high = _float(_pick(row, "high"))
+        if not day_text or high is None:
+            continue
+
+        try:
+            day = date.fromisoformat(day_text[:10])
+        except ValueError:
+            continue
+
+        if start <= day <= end:
+            observations[day] = high
+
+    return observations
+
+
 def fetch_observations(
     session: requests.Session,
     station: str,
@@ -183,20 +208,7 @@ def fetch_observations(
             },
         )
 
-        for row in rows:
-            day_text = _pick(row, "valid")
-            high = _float(_pick(row, "high"))
-            if not day_text or high is None:
-                continue
-
-            try:
-                day = date.fromisoformat(day_text[:10])
-            except ValueError:
-                continue
-
-            if start <= day <= end:
-                observations[day] = high
-
+        observations.update(parse_cli_observations(rows, start, end))
         time.sleep(request_sleep)
 
     return observations
