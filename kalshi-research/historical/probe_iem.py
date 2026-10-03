@@ -11,7 +11,7 @@ import requests
 from historical.build_nbm_history import (
     DEFAULT_MODEL,
     DEFAULT_STATION,
-    IEM_DAILY,
+    IEM_CLI,
     IEM_MOS,
     USER_AGENT,
     _parse_datetime,
@@ -26,9 +26,9 @@ MOS_REQUIRED_ALIASES = {
     "txn": ("txn",),
 }
 
-DAILY_REQUIRED_ALIASES = {
-    "date": ("day", "date", "valid"),
-    "max_temp_f": ("max_temp_f", "high", "max_tmpf"),
+CLI_REQUIRED_ALIASES = {
+    "date": ("valid",),
+    "high": ("high",),
 }
 
 
@@ -111,35 +111,41 @@ def main():
         print(f"  txn={_pick(sample, 'txn')}")
         print(f"  xnd={_pick(sample, 'xnd')}")
 
-    daily_rows = fetch_csv(
+    cli_rows = fetch_csv(
         session,
-        IEM_DAILY,
+        IEM_CLI,
         {
-            "sts": args.date.isoformat(),
-            "ets": args.date.isoformat(),
-            "network": "NWSCLI",
-            "stations": args.station,
-            "var": "max_temp_f",
-            "format": "csv",
-            "na": "",
+            "station": args.station,
+            "year": args.date.year,
+            "fmt": "csv",
         },
     )
 
-    if not daily_rows:
-        raise SystemExit("IEM daily climate endpoint returned no rows.")
+    if not cli_rows:
+        raise SystemExit("IEM parsed CLI endpoint returned no rows.")
 
-    assert_aliases(daily_rows[0], DAILY_REQUIRED_ALIASES, "daily climate")
+    assert_aliases(cli_rows[0], CLI_REQUIRED_ALIASES, "parsed CLI")
 
     print()
-    print("Daily climate probe OK")
+    print("Parsed CLI probe OK")
     print("Columns:")
-    print("  " + ", ".join(daily_rows[0].keys()))
-    print(f"Rows: {len(daily_rows):,}")
-    sample = daily_rows[0]
+    print("  " + ", ".join(cli_rows[0].keys()))
+    print(f"Rows for {args.date.year}: {len(cli_rows):,}")
+
+    matches = [
+        row for row in cli_rows
+        if _pick(row, *CLI_REQUIRED_ALIASES["date"]) == args.date.isoformat()
+    ]
+    if not matches:
+        raise SystemExit(
+            f"No parsed CLI observation found for {args.date.isoformat()}."
+        )
+
+    sample = matches[0]
     print(
         "Sample: "
-        f"date={_pick(sample, *DAILY_REQUIRED_ALIASES['date'])}, "
-        f"max_temp_f={_pick(sample, *DAILY_REQUIRED_ALIASES['max_temp_f'])}"
+        f"date={_pick(sample, *CLI_REQUIRED_ALIASES['date'])}, "
+        f"high={_pick(sample, *CLI_REQUIRED_ALIASES['high'])}"
     )
 
     print()
