@@ -11,6 +11,7 @@ from datetime import date
 from pathlib import Path
 from statistics import mean, median, pstdev
 
+from historical.sampling import load_bucketed_rows
 
 EXPECTED_LEADS = (12, 24, 36, 48, 60, 72)
 
@@ -60,7 +61,20 @@ def load_rows(path: Path) -> list[dict]:
     return rows
 
 
+def _stats(errors: list[float], sigmas: list[float]) -> dict:
+    return {
+        "n": len(errors),
+        "bias": mean(errors) if errors else None,
+        "mae": mean(abs(x) for x in errors) if errors else None,
+        "rmse": math.sqrt(mean(x * x for x in errors)) if errors else None,
+        "sd": pstdev(errors) if len(errors) > 1 else None,
+        "median_error": median(errors) if errors else None,
+        "mean_xnd": mean(sigmas) if sigmas else None,
+    }
+
+
 def audit(rows: list[dict], tolerance: float) -> dict:
+    """Structural audit of every archived NBM run in the CSV."""
     if not rows:
         raise SystemExit("Dataset is empty.")
 
@@ -111,38 +125,45 @@ def audit(rows: list[dict], tolerance: float) -> dict:
             for row in values
             if row["forecast_sigma_f"] is not None
         ]
-        summary["by_lead"][lead] = {
-            "n": len(values),
-            "bias": mean(errors) if errors else None,
-            "mae": mean(abs(x) for x in errors) if errors else None,
-            "rmse": math.sqrt(mean(x * x for x in errors)) if errors else None,
-            "sd": pstdev(errors) if len(errors) > 1 else None,
-            "median_error": median(errors) if errors else None,
-            "mean_xnd": mean(sigmas) if sigmas else None,
-        }
+        summary["by_lead"][lead] = _stats(errors, sigmas)
 
     return summary
+
+
+def sampled_summary(path: Path, tolerance: float) -> tuple[list[dict], dict[int, dict]]:
+    """Summarize the independent rows actually used by model fitting.
+
+    historical.sampling keeps at most one forecast for each target-date /
+    lead-bucket pair, choosing the archived run closest to the nominal horizon.
+    """
+    sampled = load_bucketed_rows(path, EXPECTED_LEADS, tolerance)
+    by_lead = defaultdict(list)
+    for row in sampled:
+        by_lead[row["lead_bucket"]].append(row)
+
+    summary = {}
+    for lead in EXPECTED_LEADS:
+        values = by_lead.get(lead, [])
+        errors = [row["error"] for row in values]
+        sigmas = [
+            row["forecast_sigma"]
+            for row in values
+            if row["forecast_sigma"] is not None
+        ]
+        summary[lead] = _stats(errors, sigmas)
+    return sampled, summary
 
 
 def fmt(value, digits=2):
     return "-" if value is None else f"{value:.{digits}f}"
 
 
-def main():
-    args = parse_args()
-    rows = load_rows(args.dataset)
-    result = audit(rows, args.lead_tolerance)
-
-    print(f"Dataset: {args.dataset}")
-    print(
-        f"Rows: {result['rows']:,} across {result['days']:,} target days "
-        f"({result['first_date']} .. {result['last_date']})"
-    )
-    print()
+def _print_stats(title: str, by_lead: dict[int, dict]) -> None:
+    print(title)
     print("lead   n    bias    MAE   RMSE     SD   mean XND")
     print("----  ---  ------  -----  -----  -----  --------")
     for lead in EXPECTED_LEADS:
-        stats = result["by_lead"][lead]
+        stats = by_lead[lead]
         print(
             f"{lead:>4}  {stats['n']:>3}  "
             f"{fmt(stats['bias']):>6}  {fmt(stats['mae']):>5}  "
@@ -150,21 +171,46 @@ def main():
             f"{fmt(stats['mean_xnd']):>8}"
         )
 
+
+def main():
+    args = parse_args()
+    rows = load_rows(args.dataset)
+    result = audit(rows, args.lead_tolerance)
+    sampled, sampled_by_lead = sampled_summary(
+        args.dataset, args.lead_tolerance
+    )
+
+    print(f"Dataset: {args.dataset}")
+    print(
+        f"Raw rows: {result['rows']:,} across {result['days']:,} target days "
+        f"({result['first_date']} .. {result['last_date']})"
+    )
+    print(
+        f"Independent sampled rows used by modeling: {len(sampled):,} "
+        "(max one target-date / lead-bucket)"
+    )
     print()
-    print("Largest absolute forecast errors")
-    print("-------------------------------")
+
+    _print_stats("Raw archived 6-hour NBM runs", result["by_lead"])
+    print()
+    _print_stats("Independent sampled rows", sampled_by_lead)
+
+    print()
+    print("Largest absolute sampled forecast errors")
+    print("----------------------------------------")
     largest = sorted(
-        rows,
-        key=lambda row: abs(row["error_f"]),
+        sampled,
+        key=lambda row: abs(row["error"]),
         reverse=True,
     )[: args.show_largest]
     for row in largest:
         print(
-            f"{row['target_date']} lead={row['lead_hours']:5.1f}h "
-            f"fcst={row['forecast_high_f']:5.1f} "
-            f"actual={row['actual_high_f']:5.1f} "
-            f"error={row['error_f']:+5.1f} "
-            f"xnd={fmt(row['forecast_sigma_f'], 1)}"
+            f"{row['target_date']} bucket={row['lead_bucket']:>2}h "
+            f"lead={row['lead_hours']:5.1f}h "
+            f"fcst={row['forecast']:5.1f} "
+            f"actual={row['actual']:5.1f} "
+            f"error={row['error']:+5.1f} "
+            f"xnd={fmt(row['forecast_sigma'], 1)}"
         )
 
     print()
