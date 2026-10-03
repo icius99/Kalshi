@@ -126,8 +126,16 @@ def fetch_csv(
     """Fetch an IEM CSV endpoint with bounded retry/backoff for throttling."""
 
     response = None
+    last_exception = None
     for attempt in range(max_attempts):
-        response = session.get(url, params=params, timeout=60)
+        try:
+            response = session.get(url, params=params, timeout=60)
+        except requests.RequestException as exc:
+            last_exception = exc
+            if attempt == max_attempts - 1:
+                raise
+            time.sleep(2.5 * (attempt + 1))
+            continue
 
         if response.status_code == 429 or 500 <= response.status_code < 600:
             if attempt == max_attempts - 1:
@@ -146,6 +154,8 @@ def fetch_csv(
         break
 
     if response is None:
+        if last_exception is not None:
+            raise last_exception
         raise RuntimeError("IEM request did not produce a response")
 
     text = response.text

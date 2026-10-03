@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Fit and query an empirical daily-high forecast error model."""
+"""Fit a daily-high forecast error model from historical NBM verification."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import NormalDist, mean, pstdev
 
 from historical.sampling import load_bucketed_rows, nearest_bucket
 
-DEFAULT_BUCKETS = (12, 24, 36, 48, 60, 72)
+# 72h remains available via --buckets, but the live 2021-2026 audit found
+# materially thinner/less stable coverage there. Keep the default model to the
+# well-populated 12-60h horizons.
+DEFAULT_BUCKETS = (12, 24, 36, 48, 60)
 
 
 def parse_args():
@@ -22,6 +25,7 @@ def parse_args():
     parser.add_argument("--buckets", default=",".join(map(str, DEFAULT_BUCKETS)))
     parser.add_argument("--max-distance", type=float, default=5.0)
     parser.add_argument("--min-samples", type=int, default=30)
+    parser.add_argument("--empirical-alpha", type=float, default=0.1)
     return parser.parse_args()
 
 
@@ -30,6 +34,16 @@ def load_errors(path: Path, buckets: tuple[int, ...], max_distance: float):
     for row in load_bucketed_rows(path, buckets, max_distance):
         grouped[row["lead_bucket"]].append(row["error"])
     return grouped
+
+
+def integer_error_counts(errors: list[float]) -> dict[str, int]:
+    counts = Counter()
+    for error in errors:
+        rounded = int(round(error))
+        if abs(error - rounded) > 1e-6:
+            raise ValueError(f"expected integer-Fahrenheit error, got {error}")
+        counts[rounded] += 1
+    return {str(key): counts[key] for key in sorted(counts)}
 
 
 def summarize(errors: list[float]) -> dict:
@@ -46,16 +60,14 @@ def summarize(errors: list[float]) -> dict:
         "mae_f": round(mae, 4),
         "rmse_f": round(rmse, 4),
         "p90_abs_error_f": round(p90, 4),
+        "error_counts": integer_error_counts(errors),
     }
 
 
-def kalshi_bucket_probabilities(forecast_high_f: float, bias_f: float, sd_error_f: float) -> dict[str, float]:
-    """Map a forecast + error distribution to KXHIGHNY-style integer buckets.
-
-    Kalshi's displayed buckets are <=62, 63-64, 65-66, 67-68, 69-70, >=71.
-    Half-degree cut points implement integer rounding boundaries for a continuous
-    approximation to the realized daily high.
-    """
+def kalshi_bucket_probabilities(
+    forecast_high_f: float, bias_f: float, sd_error_f: float
+) -> dict[str, float]:
+    """Legacy normal approximation retained for model-comparison research."""
     if sd_error_f <= 0:
         raise ValueError("sd_error_f must be positive")
     dist = NormalDist(mu=forecast_high_f + bias_f, sigma=sd_error_f)
@@ -75,13 +87,19 @@ def kalshi_bucket_probabilities(forecast_high_f: float, bias_f: float, sd_error_
 
 def main() -> None:
     args = parse_args()
+    if args.empirical_alpha <= 0:
+        raise SystemExit("--empirical-alpha must be positive")
+
     buckets = tuple(sorted({int(x.strip()) for x in args.buckets.split(",") if x.strip()}))
     grouped = load_errors(args.dataset, buckets, args.max_distance)
 
     model = {
+        "version": 2,
+        "distribution": "empirical_integer_errors",
         "dataset": str(args.dataset),
         "lead_buckets_hours": list(buckets),
         "max_bucket_distance_hours": args.max_distance,
+        "empirical_smoothing_alpha": args.empirical_alpha,
         "buckets": {},
     }
 
@@ -102,7 +120,7 @@ def main() -> None:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")
-    print(f"\nWrote model to {args.output}")
+    print(f"\nWrote empirical model to {args.output}")
 
 
 if __name__ == "__main__":

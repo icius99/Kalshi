@@ -19,22 +19,20 @@ class Signal:
     estimated_edge: float
 
 
-def evaluate_markets(
+def evaluate_probabilities(
     markets: list[dict],
-    model_mean_f: float,
-    model_sigma_f: float,
+    probabilities: dict[str, float],
     min_edge: float = 0.05,
     execution_buffer: float = 0.01,
     min_qty: float = 10.0,
     max_contracts: int = 25,
     taker_rate: float = STANDARD_TAKER_RATE,
-) -> tuple[dict[str, float], list[Signal]]:
-    probs = probabilities_for_markets(markets, model_mean_f, model_sigma_f)
+) -> list[Signal]:
     signals: list[Signal] = []
 
     for market in markets:
         ticker = market["market_ticker"]
-        probability_yes = probs[ticker]
+        probability_yes = probabilities[ticker]
         ask = market.get("yes_ask")
         bid = market.get("yes_bid")
         yes_available = float(market.get("yes_ask_qty") or 0.0)
@@ -73,4 +71,28 @@ def evaluate_markets(
             consider("NO", no_ask, no_available, 1.0 - probability_yes)
 
     signals.sort(key=lambda item: item.estimated_edge, reverse=True)
-    return probs, signals
+    return signals
+
+
+def evaluate_markets(
+    markets: list[dict],
+    model_mean_f: float,
+    model_sigma_f: float,
+    min_edge: float = 0.05,
+    execution_buffer: float = 0.01,
+    min_qty: float = 10.0,
+    max_contracts: int = 25,
+    taker_rate: float = STANDARD_TAKER_RATE,
+) -> tuple[dict[str, float], list[Signal]]:
+    """Legacy normal-model wrapper retained for tests/comparison work."""
+    probabilities = probabilities_for_markets(markets, model_mean_f, model_sigma_f)
+    signals = evaluate_probabilities(
+        markets,
+        probabilities,
+        min_edge,
+        execution_buffer,
+        min_qty,
+        max_contracts,
+        taker_rate,
+    )
+    return probabilities, signals

@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument("--min-edge", type=float, default=0.05)
     parser.add_argument("--execution-buffer", type=float, default=0.005)
     parser.add_argument("--min-qty", type=float, default=10.0)
-    parser.add_argument("--max-model-distance", type=float, default=8.0)
+    parser.add_argument("--max-model-distance", type=float, default=6.0)
     parser.add_argument("--anchor-hour", type=int, default=15)
     parser.add_argument("--ledger", type=Path, default=Path("paper.db"))
     parser.add_argument(

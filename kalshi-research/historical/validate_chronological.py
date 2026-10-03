@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
 from statistics import NormalDist, mean, pstdev
@@ -14,7 +14,7 @@ from statistics import NormalDist, mean, pstdev
 from historical.sampling import load_bucketed_rows
 
 
-DEFAULT_BUCKETS = (12, 24, 36, 48, 60, 72)
+DEFAULT_BUCKETS = (12, 24, 36, 48, 60)
 
 
 def parse_args():
@@ -64,6 +64,28 @@ def rounded_temperature_probability(actual: float, mu: float, sigma: float) -> f
     return max(1e-12, dist.cdf(actual + 0.5) - dist.cdf(actual - 0.5))
 
 
+def empirical_error_pmf(errors: list[float], alpha: float = 0.1) -> dict[int, float]:
+    """Laplace-smoothed empirical integer-error distribution."""
+    counts = Counter(int(round(error)) for error in errors)
+    if not counts:
+        raise ValueError("cannot fit empirical distribution without errors")
+    support_min = min(-20, min(counts))
+    support_max = max(20, max(counts))
+    support = range(support_min, support_max + 1)
+    denominator = len(errors) + alpha * len(support)
+    return {
+        error: (counts.get(error, 0) + alpha) / denominator
+        for error in support
+    }
+
+
+def empirical_error_probability(error: float, pmf: dict[int, float]) -> float:
+    rounded = int(round(error))
+    if abs(error - rounded) > 1e-6:
+        raise ValueError(f"expected integer-Fahrenheit error, got {error}")
+    return max(1e-12, pmf.get(rounded, 1e-12))
+
+
 def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
     train_errors = [row["error"] for row in train]
     bias = mean(train_errors)
@@ -78,6 +100,10 @@ def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
     ]
 
     log_losses = []
+    no_bias_normal_log_losses = []
+    empirical_log_losses = []
+    train_rmse = math.sqrt(mean(x * x for x in train_errors))
+    empirical_pmf = empirical_error_pmf(train_errors)
     cover50 = []
     cover80 = []
     cover90 = []
@@ -87,6 +113,17 @@ def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
         mu = row["forecast"] + bias
         probability = rounded_temperature_probability(row["actual"], mu, sigma)
         log_losses.append(-math.log(probability))
+
+        no_bias_probability = rounded_temperature_probability(
+            row["actual"], row["forecast"], train_rmse
+        )
+        no_bias_normal_log_losses.append(-math.log(no_bias_probability))
+
+        empirical_probability = empirical_error_probability(
+            row["error"], empirical_pmf
+        )
+        empirical_log_losses.append(-math.log(empirical_probability))
+
         cover50.append(interval_contains(row["actual"], mu, sigma, 0.50))
         cover80.append(interval_contains(row["actual"], mu, sigma, 0.80))
         cover90.append(interval_contains(row["actual"], mu, sigma, 0.90))
@@ -104,6 +141,9 @@ def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
             math.sqrt(mean(x * x for x in corrected_errors)), 4
         ),
         "mean_integer_log_loss": round(mean(log_losses), 6),
+        "mean_bias_corrected_normal_log_loss": round(mean(log_losses), 6),
+        "mean_no_bias_normal_log_loss": round(mean(no_bias_normal_log_losses), 6),
+        "mean_empirical_log_loss": round(mean(empirical_log_losses), 6),
         "coverage_50": round(mean(cover50), 4),
         "coverage_80": round(mean(cover80), 4),
         "coverage_90": round(mean(cover90), 4),
@@ -140,8 +180,8 @@ def main():
 
     print(f"Chronological split: train before {test_start}; test on/after {test_start}")
     print()
-    print("lead  train test  bias   sigma  rawRMSE adjRMSE  cov50 cov80 cov90  logloss")
-    print("----  ----- ----  -----  -----  ------- -------  ----- ----- -----  -------")
+    print("lead  train test  bias   sigma  rawRMSE adjRMSE  empLL  zeroNLL biasNLL  cov90")
+    print("----  ----- ----  -----  -----  ------- -------  -----  ------- -------  -----")
 
     for bucket in buckets:
         train = grouped_train.get(bucket, [])
@@ -158,8 +198,10 @@ def main():
             f"{bucket:>4}  {stats['n_train']:>5} {stats['n_test']:>4}  "
             f"{stats['train_bias_f']:>+5.2f}  {stats['train_sigma_f']:>5.2f}  "
             f"{stats['test_raw_rmse_f']:>7.2f} {stats['test_corrected_rmse_f']:>7.2f}  "
-            f"{stats['coverage_50']:>5.1%} {stats['coverage_80']:>5.1%} "
-            f"{stats['coverage_90']:>5.1%}  {stats['mean_integer_log_loss']:>7.3f}"
+            f"{stats['mean_empirical_log_loss']:>5.3f}  "
+            f"{stats['mean_no_bias_normal_log_loss']:>7.3f} "
+            f"{stats['mean_bias_corrected_normal_log_loss']:>7.3f}  "
+            f"{stats['coverage_90']:>5.1%}"
         )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
