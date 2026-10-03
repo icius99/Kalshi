@@ -69,9 +69,10 @@ data/models/nbm_error_model.json
 4. The fitted normal distribution is only a baseline. We should test empirical
    residual distributions, seasonality, precipitation regimes, and NBM's own
    `XND` uncertainty before using model probabilities for paper trading.
-5. NWS climate-summary day boundaries can differ subtly from a strict midnight
-   local calendar day during DST. This should be audited against Kalshi's actual
-   Weather Company settlement history before real-money use.
+5. Kalshi names The Weather Company as the settlement source, while this
+   calibration uses the NWS Central Park CLI high. A historical bucket-level
+   settlement audit is described below; it found no observed winner mismatch
+   in the modern exhaustive-partition regime.
 
 ## Next research steps
 
@@ -152,3 +153,37 @@ Accordingly the default live model:
 
 The 72h bucket remains available for research but is excluded from the default
 model because the historical archive had materially thinner coverage there.
+
+
+## Settlement-source basis audit
+
+Kalshi's rules name The Weather Company as the final settlement source, whereas
+the historical forecast verification dataset uses the parsed NWS Central Park
+CLI high. We therefore audit the actual finalized Kalshi winner rather than
+assuming the two sources are interchangeable:
+
+```bash
+python -m historical.settlement_basis \
+  --start 2022-12-22 \
+  --end 2026-10-02
+```
+
+A live audit run on October 3, 2026 combined Kalshi's public current and archived
+settled-market endpoints and required every included event to be a mathematically
+exhaustive, non-overlapping integer-temperature partition.
+
+Results:
+
+- 1,353 usable partition events from 2022-12-22 through 2026-10-02;
+- 1,353 events where the NWS CLI high selected the exact Kalshi contract that
+  finalized YES;
+- 0 bucket mismatches (100.00% agreement);
+- annual agreement was 100% in 2022, 2023, 2024, 2025, and 2026;
+- 525 legacy/non-partition events were excluded rather than forced into the
+  comparison, and two dates lacked a CLI observation.
+
+This validates **bucket-level settlement alignment**, not exact source identity.
+The Weather Company and NWS values could still differ within the same two-degree
+bucket, and the relationship could change in the future. The audit should be
+rerun periodically and before expanding to a different weather series or bucket
+structure.
