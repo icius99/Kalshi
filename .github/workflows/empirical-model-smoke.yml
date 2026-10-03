@@ -24,7 +24,6 @@ jobs:
           python -m historical.build_nbm_history \
             --start 2021-01-01 \
             --end 2026-09-30 \
-            --mos-chunk-days 90 \
             --output /tmp/nbm-history.csv
       - name: Fit empirical model
         run: |
