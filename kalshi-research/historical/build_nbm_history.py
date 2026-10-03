@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 IEM_MOS = "https://mesonet.agron.iastate.edu/cgi-bin/request/mos.py"
-IEM_DAILY = "https://mesonet.agron.iastate.edu/cgi-bin/request/daily.py"
+IEM_CLI = "https://mesonet.agron.iastate.edu/json/cli.py"
 DEFAULT_STATION = "KNYC"
 DEFAULT_TZ = "America/New_York"
 DEFAULT_MODEL = "NBS"
@@ -156,6 +156,31 @@ def fetch_csv(
     return rows
 
 
+def parse_cli_observations(
+    rows: list[dict[str, str]],
+    start: date,
+    end: date,
+) -> dict[date, float]:
+    """Convert parsed NWS CLI CSV rows into target-date daily highs."""
+    observations: dict[date, float] = {}
+
+    for row in rows:
+        day_text = _pick(row, "valid")
+        high = _float(_pick(row, "high"))
+        if not day_text or high is None:
+            continue
+
+        try:
+            day = date.fromisoformat(day_text[:10])
+        except ValueError:
+            continue
+
+        if start <= day <= end:
+            observations[day] = high
+
+    return observations
+
+
 def fetch_observations(
     session: requests.Session,
     station: str,
@@ -163,35 +188,29 @@ def fetch_observations(
     end: date,
     request_sleep: float,
 ) -> dict[date, float]:
-    """Fetch official-ish NWSCLI daily highs from IEM, one year at a time."""
+    """Fetch parsed NWS CLI daily highs for Central Park/KNYC.
+
+    IEM's /json/cli.py service returns atomic values parsed directly from NWS
+    CLI text products.  This is preferable to the computed daily-summary
+    endpoint for NWSCLI stations because KNYC is populated in cli_data even
+    when /cgi-bin/request/daily.py returns no rows.
+    """
     observations: dict[date, float] = {}
+
     for year in range(start.year, end.year + 1):
-        ystart = max(start, date(year, 1, 1))
-        yend = min(end, date(year, 12, 31))
         rows = fetch_csv(
             session,
-            IEM_DAILY,
+            IEM_CLI,
             {
-                "sts": ystart.isoformat(),
-                "ets": yend.isoformat(),
-                "network": "NWSCLI",
-                "stations": station,
-                "var": "max_temp_f",
-                "format": "csv",
-                "na": "",
+                "station": station,
+                "year": year,
+                "fmt": "csv",
             },
         )
-        for row in rows:
-            day_text = _pick(row, "day", "date", "valid")
-            high = _float(_pick(row, "max_temp_f", "high", "max_tmpf"))
-            if not day_text or high is None:
-                continue
-            try:
-                day = date.fromisoformat(day_text[:10])
-            except ValueError:
-                continue
-            observations[day] = high
-        time.sleep(max(2.05, request_sleep))  # IEM documents a 2 s throttle.
+
+        observations.update(parse_cli_observations(rows, start, end))
+        time.sleep(request_sleep)
+
     return observations
 
 
