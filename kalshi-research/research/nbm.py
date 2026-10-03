@@ -4,6 +4,8 @@ from datetime import date, datetime, timedelta, timezone
 
 import requests
 
+NBM_PUBLICATION_LAG = timedelta(hours=1)
+
 from historical.build_nbm_history import (
     DEFAULT_MODEL,
     DEFAULT_STATION,
@@ -22,8 +24,15 @@ def select_forecast_asof(
     asof_utc: datetime,
     anchor_hour: int = 15,
     tz_name: str = DEFAULT_TZ,
+    publication_lag: timedelta = NBM_PUBLICATION_LAG,
 ) -> dict:
-    """Return the most recent NBM daily-high forecast known at the as-of timestamp."""
+    """Return the latest NBM forecast conservatively available by the as-of time.
+
+    NOAA's Text NBM availability schedule is generally 30-40 minutes after the
+    cycle timestamp for the 00/06/12/18 cycles used here.  The default one-hour
+    lag prevents treating a model cycle as tradable before its guidance was
+    actually public.
+    """
     if asof_utc.tzinfo is None:
         raise ValueError("asof_utc must be timezone-aware")
     asof_utc = asof_utc.astimezone(timezone.utc)
@@ -32,7 +41,10 @@ def select_forecast_asof(
     candidates = [
         item
         for item in forecasts
-        if item["target_date"] == target_date and item["runtime_utc"] <= asof_utc
+        if (
+            item["target_date"] == target_date
+            and item["runtime_utc"] + publication_lag <= asof_utc
+        )
     ]
     if not candidates:
         raise ValueError(
@@ -49,6 +61,7 @@ def fetch_forecast_asof(
     anchor_hour: int = 15,
     tz_name: str = DEFAULT_TZ,
     session: requests.Session | None = None,
+    publication_lag: timedelta = NBM_PUBLICATION_LAG,
 ) -> dict:
     """Reconstruct the latest NBM daily-high forecast available at a timestamp."""
     if asof_utc.tzinfo is None:
@@ -71,4 +84,11 @@ def fetch_forecast_asof(
             "format": "csv",
         },
     )
-    return select_forecast_asof(rows, target_date, asof_utc, anchor_hour, tz_name)
+    return select_forecast_asof(
+        rows,
+        target_date,
+        asof_utc,
+        anchor_hour,
+        tz_name,
+        publication_lag,
+    )
