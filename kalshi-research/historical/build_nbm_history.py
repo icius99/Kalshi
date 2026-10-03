@@ -150,9 +150,16 @@ def fetch_csv(
 
     text = response.text
     reader = csv.DictReader(io.StringIO(text))
-    rows = list(reader)
     if reader.fieldnames is None:
         raise RuntimeError(f"No CSV header returned by {response.url}")
+
+    # Some IEM CSV services emit a trailing delimiter on data rows. DictReader
+    # stores the extra unnamed field under a None key; drop only that phantom
+    # column and preserve every named field.
+    rows = [
+        {key: value for key, value in row.items() if key is not None}
+        for row in reader
+    ]
     return rows
 
 
