@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Structural and statistical sanity checks for a built historical dataset."""
+"""Audit a generated NBM-vs-CLI historical dataset before fitting models."""
 
 from __future__ import annotations
 
@@ -7,183 +7,176 @@ import argparse
 import csv
 import math
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median, pstdev
 
-from historical.sampling import load_bucketed_rows
 
-DEFAULT_BUCKETS = (12, 24, 36, 48, 60, 72)
+EXPECTED_LEADS = (12, 24, 36, 48, 60, 72)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset", type=Path)
-    parser.add_argument("--buckets", default=",".join(map(str, DEFAULT_BUCKETS)))
-    parser.add_argument("--max-distance", type=float, default=5.0)
+    parser.add_argument("--lead-tolerance", type=float, default=5.0)
+    parser.add_argument("--show-largest", type=int, default=10)
     return parser.parse_args()
 
 
-def parse_iso_datetime(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+def nearest_lead(value: float, tolerance: float) -> int | None:
+    lead = min(EXPECTED_LEADS, key=lambda x: abs(x - value))
+    return lead if abs(lead - value) <= tolerance else None
 
 
-def raw_audit(path: Path) -> dict:
-    target_actuals = defaultdict(set)
-    rows_per_date = Counter()
-    runtime_target_pairs = Counter()
-    structural_errors = []
-    raw_rows = 0
-
+def load_rows(path: Path) -> list[dict]:
+    rows = []
     with path.open(newline="", encoding="utf-8") as handle:
         for line_number, row in enumerate(csv.DictReader(handle), start=2):
-            raw_rows += 1
             try:
                 target = date.fromisoformat(row["target_date"])
-                actual = float(row["actual_high_f"])
-                forecast = float(row["forecast_high_f"])
-                error = float(row["error_f"])
                 lead = float(row["lead_hours"])
-                runtime = parse_iso_datetime(row["runtime_utc"])
-                valid = parse_iso_datetime(row["valid_utc"])
+                forecast = float(row["forecast_high_f"])
+                actual = float(row["actual_high_f"])
+                error = float(row["error_f"])
+                sigma_text = row.get("forecast_sigma_f", "").strip()
+                sigma = float(sigma_text) if sigma_text else None
             except (KeyError, TypeError, ValueError) as exc:
-                structural_errors.append(f"line {line_number}: parse failure: {exc}")
-                continue
+                raise SystemExit(
+                    f"Malformed row at CSV line {line_number}: {exc}"
+                ) from exc
 
-            if not all(math.isfinite(v) for v in (actual, forecast, error, lead)):
-                structural_errors.append(f"line {line_number}: non-finite numeric value")
-                continue
+            rows.append(
+                {
+                    "target_date": target,
+                    "runtime_utc": row["runtime_utc"],
+                    "valid_utc": row["valid_utc"],
+                    "lead_hours": lead,
+                    "forecast_high_f": forecast,
+                    "forecast_sigma_f": sigma,
+                    "actual_high_f": actual,
+                    "error_f": error,
+                }
+            )
+    return rows
 
-            if abs((actual - forecast) - error) > 1e-9:
-                structural_errors.append(
-                    f"line {line_number}: error_f != actual_high_f - forecast_high_f"
-                )
 
-            if valid.hour != 0 or valid.minute != 0:
-                structural_errors.append(
-                    f"line {line_number}: daily max valid time is not 00Z: {valid.isoformat()}"
-                )
+def audit(rows: list[dict], tolerance: float) -> dict:
+    if not rows:
+        raise SystemExit("Dataset is empty.")
 
-            mapped_target = (valid - timedelta(hours=12)).date()
-            if mapped_target != target:
-                structural_errors.append(
-                    f"line {line_number}: valid time maps to {mapped_target}, not {target}"
-                )
+    issues = []
+    by_date = defaultdict(list)
+    by_lead = defaultdict(list)
 
-            target_actuals[target].add(actual)
-            rows_per_date[target] += 1
-            runtime_target_pairs[(runtime.isoformat(), target)] += 1
+    for row in rows:
+        by_date[row["target_date"]].append(row)
+        bucket = nearest_lead(row["lead_hours"], tolerance)
+        if bucket is None:
+            issues.append(
+                f"{row['target_date']}: unexpected lead {row['lead_hours']:.1f}h"
+            )
+        else:
+            by_lead[bucket].append(row)
 
-    duplicate_runtime_targets = [
-        key for key, count in runtime_target_pairs.items() if count > 1
-    ]
-    if duplicate_runtime_targets:
-        structural_errors.append(
-            f"{len(duplicate_runtime_targets)} duplicate runtime/target pairs"
-        )
+        recomputed = row["actual_high_f"] - row["forecast_high_f"]
+        if not math.isclose(recomputed, row["error_f"], abs_tol=1e-9):
+            issues.append(
+                f"{row['target_date']} {row['runtime_utc']}: "
+                f"error mismatch stored={row['error_f']:.1f} "
+                f"computed={recomputed:.1f}"
+            )
 
-    inconsistent_actual_dates = [
-        target for target, values in target_actuals.items() if len(values) > 1
-    ]
-    if inconsistent_actual_dates:
-        structural_errors.append(
-            f"{len(inconsistent_actual_dates)} dates have inconsistent actual highs"
-        )
+    dates = sorted(by_date)
+    duplicate_runtime_keys = Counter(
+        (row["target_date"], row["runtime_utc"]) for row in rows
+    )
+    duplicates = [key for key, count in duplicate_runtime_keys.items() if count > 1]
+    for target, runtime in duplicates:
+        issues.append(f"duplicate target/runtime: {target} {runtime}")
 
-    dates = sorted(target_actuals)
-    missing_dates = []
-    if dates:
-        cursor = dates[0]
-        while cursor <= dates[-1]:
-            if cursor not in target_actuals:
-                missing_dates.append(cursor)
-            cursor += timedelta(days=1)
-
-    return {
-        "raw_rows": raw_rows,
-        "dates": dates,
-        "rows_per_date": rows_per_date,
-        "missing_dates": missing_dates,
-        "structural_errors": structural_errors,
+    summary = {
+        "rows": len(rows),
+        "days": len(dates),
+        "first_date": dates[0],
+        "last_date": dates[-1],
+        "issues": issues,
+        "by_lead": {},
     }
+
+    for lead in EXPECTED_LEADS:
+        values = by_lead.get(lead, [])
+        errors = [row["error_f"] for row in values]
+        sigmas = [
+            row["forecast_sigma_f"]
+            for row in values
+            if row["forecast_sigma_f"] is not None
+        ]
+        summary["by_lead"][lead] = {
+            "n": len(values),
+            "bias": mean(errors) if errors else None,
+            "mae": mean(abs(x) for x in errors) if errors else None,
+            "rmse": math.sqrt(mean(x * x for x in errors)) if errors else None,
+            "sd": pstdev(errors) if len(errors) > 1 else None,
+            "median_error": median(errors) if errors else None,
+            "mean_xnd": mean(sigmas) if sigmas else None,
+        }
+
+    return summary
+
+
+def fmt(value, digits=2):
+    return "-" if value is None else f"{value:.{digits}f}"
 
 
 def main():
     args = parse_args()
-    buckets = tuple(
-        sorted({int(value.strip()) for value in args.buckets.split(",") if value.strip()})
-    )
-
-    raw = raw_audit(args.dataset)
-    selected = load_bucketed_rows(args.dataset, buckets, args.max_distance)
+    rows = load_rows(args.dataset)
+    result = audit(rows, args.lead_tolerance)
 
     print(f"Dataset: {args.dataset}")
-    print(f"Raw forecast rows: {raw['raw_rows']:,}")
-    print(f"Target dates: {len(raw['dates']):,}")
-
-    if raw["dates"]:
-        print(f"Date range: {raw['dates'][0]} .. {raw['dates'][-1]}")
-        counts = list(raw["rows_per_date"].values())
-        print(
-            "Raw forecasts/date: "
-            f"min={min(counts)} mean={mean(counts):.1f} max={max(counts)}"
-        )
-
-    if raw["missing_dates"]:
-        preview = ", ".join(day.isoformat() for day in raw["missing_dates"][:8])
-        suffix = " ..." if len(raw["missing_dates"]) > 8 else ""
-        print(f"Missing dates inside range: {len(raw['missing_dates'])} ({preview}{suffix})")
-    else:
-        print("Missing dates inside range: 0")
-
+    print(
+        f"Rows: {result['rows']:,} across {result['days']:,} target days "
+        f"({result['first_date']} .. {result['last_date']})"
+    )
     print()
-    print("Selected one-per-date lead buckets")
-    print("lead  n_dates  mean_lead  max_dist  bias    MAE    RMSE  mean_XND")
-    print("----  -------  ---------  --------  ------  -----  -----  --------")
-
-    by_bucket = defaultdict(list)
-    for row in selected:
-        by_bucket[row["lead_bucket"]].append(row)
-
-    for bucket in buckets:
-        rows = by_bucket.get(bucket, [])
-        if not rows:
-            print(f"{bucket:>4}  {0:>7}  -          -         -       -      -      -")
-            continue
-
-        errors = [row["error"] for row in rows]
-        sigmas = [row["forecast_sigma"] for row in rows if row["forecast_sigma"] is not None]
-        rmse = math.sqrt(mean(value * value for value in errors))
-        mean_sigma = "-" if not sigmas else f"{mean(sigmas):.2f}"
+    print("lead   n    bias    MAE   RMSE     SD   mean XND")
+    print("----  ---  ------  -----  -----  -----  --------")
+    for lead in EXPECTED_LEADS:
+        stats = result["by_lead"][lead]
         print(
-            f"{bucket:>4}  {len(rows):>7}  {mean(row['lead_hours'] for row in rows):>9.2f}  "
-            f"{max(row['distance_to_bucket'] for row in rows):>8.2f}  "
-            f"{mean(errors):>+6.2f}  {mean(abs(x) for x in errors):>5.2f}  "
-            f"{rmse:>5.2f}  {mean_sigma:>8}"
+            f"{lead:>4}  {stats['n']:>3}  "
+            f"{fmt(stats['bias']):>6}  {fmt(stats['mae']):>5}  "
+            f"{fmt(stats['rmse']):>5}  {fmt(stats['sd']):>5}  "
+            f"{fmt(stats['mean_xnd']):>8}"
         )
 
     print()
-    print(f"Selected rows: {len(selected):,}")
-
-    if selected:
-        print("First selected rows:")
-        for row in selected[:6]:
-            print(
-                f"  {row['target_date']} lead={row['lead_hours']:.1f}h "
-                f"bucket={row['lead_bucket']}h forecast={row['forecast']:.0f} "
-                f"actual={row['actual']:.0f} error={row['error']:+.0f} "
-                f"xnd={row['forecast_sigma']}"
-            )
-
-    if raw["structural_errors"]:
-        print()
-        print("STRUCTURAL AUDIT FAILED")
-        for error in raw["structural_errors"][:20]:
-            print(f"  - {error}")
-        raise SystemExit(2)
+    print("Largest absolute forecast errors")
+    print("-------------------------------")
+    largest = sorted(
+        rows,
+        key=lambda row: abs(row["error_f"]),
+        reverse=True,
+    )[: args.show_largest]
+    for row in largest:
+        print(
+            f"{row['target_date']} lead={row['lead_hours']:5.1f}h "
+            f"fcst={row['forecast_high_f']:5.1f} "
+            f"actual={row['actual_high_f']:5.1f} "
+            f"error={row['error_f']:+5.1f} "
+            f"xnd={fmt(row['forecast_sigma_f'], 1)}"
+        )
 
     print()
-    print("Structural audit passed.")
+    if result["issues"]:
+        print(f"AUDIT FAILED: {len(result['issues'])} issue(s)")
+        for issue in result["issues"][:20]:
+            print(f"  - {issue}")
+        if len(result["issues"]) > 20:
+            print(f"  ... and {len(result['issues']) - 20} more")
+        raise SystemExit(1)
+
+    print("AUDIT PASSED: no structural inconsistencies found.")
 
 
 if __name__ == "__main__":
