@@ -30,6 +30,8 @@ DEFAULT_STATION = "KNYC"
 DEFAULT_TZ = "America/New_York"
 DEFAULT_MODEL = "NBS"
 USER_AGENT = "kalshi-weather-research/0.2 (historical verification)"
+FORECAST_DEFINITION = "calendar_day_nbm_txn_plus_early_tmp_v1"
+OBSERVATION_DEFINITION = "nws_cli_knyc_calendar_day_high_v1"
 
 
 def parse_args() -> argparse.Namespace:
