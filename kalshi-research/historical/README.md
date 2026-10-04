@@ -192,3 +192,32 @@ The Weather Company and NWS values could still differ within the same two-degree
 bucket, and the relationship could change in the future. The audit should be
 rerun periodically and before expanding to a different weather series or bucket
 structure.
+
+
+## Dual probability calibration
+
+The fitted model now stores two probability candidates for each lead bucket:
+
+- **Empirical integer residuals**: the smoothed historical distribution of
+  `actual - forecast`.
+- **Scaled NBM case uncertainty**: a normal distribution centered on the
+  calendar-day forecast whose sigma is the current NBM uncertainty
+  (`XND` when TXN wins, `TSD` when early TMP wins) multiplied by a
+  historical calibration factor.
+
+The live paper-signal path still defaults to the empirical residual model.
+The scaled-uncertainty candidate is fitted and serialized so it can be selected
+later without rebuilding the historical dataset.
+
+Model-family selection should be based on annual walk-forward log loss, not the
+single 2025-2026 holdout that has already been inspected:
+
+```bash
+python -m historical.walkforward_compare \
+  data/historical/nbm_nyc_20210101_20260930.csv \
+  --output data/models/nbm_walkforward_20210101_20260930.json
+```
+
+Each test year is scored using only prior-year training data. The report compares
+empirical residuals, a single global normal sigma, and calibrated case-specific
+NBM uncertainty.
