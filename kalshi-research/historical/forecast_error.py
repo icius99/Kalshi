@@ -10,6 +10,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import NormalDist, mean, pstdev
 
+from historical.build_nbm_history import FORECAST_DEFINITION, OBSERVATION_DEFINITION
 from historical.sampling import load_bucketed_rows, nearest_bucket
 
 # 72h remains available via --buckets, but the live 2021-2026 audit found
@@ -94,8 +95,12 @@ def main() -> None:
     grouped = load_errors(args.dataset, buckets, args.max_distance)
 
     model = {
-        "version": 2,
+        "version": 3,
         "distribution": "empirical_integer_errors",
+        "forecast_definition": FORECAST_DEFINITION,
+        "observation_definition": OBSERVATION_DEFINITION,
+        "station": "KNYC",
+        "series": "KXHIGHNY",
         "dataset": str(args.dataset),
         "lead_buckets_hours": list(buckets),
         "max_bucket_distance_hours": args.max_distance,
