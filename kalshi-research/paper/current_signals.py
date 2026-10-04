@@ -153,6 +153,19 @@ def snapshot_age_minutes(
     ).total_seconds() / 60.0
 
 
+def enforce_entry_window(
+    market_lead_hours: float,
+    min_market_lead_hours: float,
+    anchor_hour: int,
+) -> None:
+    if market_lead_hours < min_market_lead_hours:
+        raise PaperEvaluationSkip(
+            f"market is only {market_lead_hours:.1f}h from the "
+            f"{anchor_hour}:00 ET anchor; entry policy requires at least "
+            f"{min_market_lead_hours:.1f}h"
+        )
+
+
 def build_evaluation(args):
     conn = sqlite3.connect(args.db)
     event, market_timestamp = latest_event(conn, args.event)
@@ -170,12 +183,11 @@ def build_evaluation(args):
 
     anchor = datetime.combine(target, time(args.anchor_hour), tzinfo=NY)
     market_lead_hours = lead_hours_to_anchor(anchor, snapshot_dt)
-    if market_lead_hours < args.min_market_lead_hours:
-        raise PaperEvaluationSkip(
-            f"market is only {market_lead_hours:.1f}h from the "
-            f"{args.anchor_hour}:00 ET anchor; entry policy requires at least "
-            f"{args.min_market_lead_hours:.1f}h"
-        )
+    enforce_entry_window(
+        market_lead_hours,
+        args.min_market_lead_hours,
+        args.anchor_hour,
+    )
 
     observed = None
     minimum_actual_f = None
