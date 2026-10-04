@@ -57,6 +57,11 @@ class LedgerTests(unittest.TestCase):
                 "forecast_high_f",
                 "forecast_sigma_f",
                 "forecast_source",
+                "intraday_conditioning",
+                "observed_high_f",
+                "minimum_actual_f",
+                "observation_buffer_f",
+                "invalidation_reason",
             ):
                 self.assertIn(expected, columns)
             conn.close()
