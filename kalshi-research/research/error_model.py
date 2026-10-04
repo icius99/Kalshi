@@ -142,16 +142,47 @@ class ForecastErrorModel:
             for ticker, probability in probabilities.items()
         }
 
+    def conditioned_error_pmf(
+        self,
+        bucket: ErrorBucket,
+        forecast_high_f: float,
+        minimum_actual_f: float | None,
+    ) -> dict[int, float]:
+        """Condition the empirical final-high distribution on an observed floor."""
+        pmf = self.error_pmf(bucket)
+        if minimum_actual_f is None:
+            return pmf
+
+        filtered = {
+            error: mass
+            for error, mass in pmf.items()
+            if forecast_high_f + error >= minimum_actual_f
+        }
+        total = sum(filtered.values())
+        if total <= 0:
+            raise ValueError(
+                "observed high floor lies above all empirical model support"
+            )
+        return {
+            error: mass / total
+            for error, mass in filtered.items()
+        }
+
     def probabilities_for_markets(
         self,
         markets: list[dict],
         forecast_high_f: float,
         lead_hours: float,
         max_distance: float | None = None,
+        minimum_actual_f: float | None = None,
     ) -> tuple[ErrorBucket, dict[str, float]]:
         """Map empirical historical forecast errors into current Kalshi buckets."""
         fit = self.nearest(lead_hours, max_distance)
-        pmf = self.error_pmf(fit)
+        pmf = self.conditioned_error_pmf(
+            fit,
+            forecast_high_f,
+            minimum_actual_f,
+        )
         probabilities: dict[str, float] = {}
 
         for market in markets:
