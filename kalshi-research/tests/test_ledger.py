@@ -61,6 +61,8 @@ class LedgerTests(unittest.TestCase):
                 "observed_high_f",
                 "minimum_actual_f",
                 "observation_buffer_f",
+                "entry_policy",
+                "execution_quote_utc",
                 "invalidation_reason",
             ):
                 self.assertIn(expected, columns)
