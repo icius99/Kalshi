@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build a historical NYC daily-high forecast verification dataset.
+"""Build a historical NYC calendar-day high forecast verification dataset.
 
-Baseline forecast source: NWS National Blend of Models (NBS text guidance)
-archived by the Iowa Environmental Mesonet (IEM).
-Observation source: NWS daily climate summaries (NWSCLI) for Central Park/KNYC,
-also exposed by IEM.
+Forecast source: NWS National Blend of Models (NBS text guidance) archived by
+the Iowa Environmental Mesonet (IEM). The predictor combines NBM TXN with
+early-morning TMP guidance so it covers the full NYC local calendar day.
+Observation source: parsed NWS CLI daily highs for Central Park/KNYC via IEM.
 
 The output is intentionally plain CSV so the modeling layer is decoupled from
 network/data-acquisition details.
@@ -267,46 +267,124 @@ def extract_daily_high_forecasts(
     tz_name: str,
     anchor_hour: int,
 ) -> list[dict]:
-    """Extract NBS TXN values representing daily maximum temperature.
+    """Build a calendar-day high forecast from NBS guidance.
 
-    NOAA's NBM station-card definition is explicit:
-    - TXN minimum: 00Z-18Z period, reported at 12Z.
-    - TXN maximum: 12Z current day-06Z next day, reported at 00Z next day.
+    NBM TXN maximum covers 12Z(current day)-06Z(next day), which misses the
+    first several hours of the NYC local calendar day.  That matters on frontal
+    passages when the day's true high occurs shortly after midnight.
 
-    For KNYC, therefore, only 00Z TXN records are maxima.  The market target
-    date is the UTC date on which that max period begins, i.e. the calendar
-    date immediately preceding the 00Z report.
+    For each model runtime / target date:
+    1. take the documented 00Z TXN maximum for the daytime/evening window;
+    2. find TMP guidance from local midnight up to (but not including) 12Z;
+    3. use the larger value as the forecast for the full local calendar day.
+
+    XND is used when TXN wins. If an early-morning TMP value wins and TSD is
+    available for that valid time, TSD is used instead.
     """
     tz = ZoneInfo(tz_name)
-    forecasts: list[dict] = []
+
+    parsed_rows: list[dict] = []
+    by_runtime: dict[datetime, list[dict]] = defaultdict(list)
 
     for row in rows:
-        txn = _float(_pick(row, "txn"))
-        if txn is None:
-            continue
-
-        runtime = _parse_datetime(_pick(row, "runtime", "runtime_utc", "run_time", "model_run"))
-        valid = _parse_datetime(_pick(row, "ftime", "ftime_utc", "valid", "valid_time"))
+        runtime = _parse_datetime(
+            _pick(row, "runtime", "runtime_utc", "run_time", "model_run")
+        )
+        valid = _parse_datetime(
+            _pick(row, "ftime", "ftime_utc", "valid", "valid_time")
+        )
         if runtime is None or valid is None:
             continue
 
+        parsed = {
+            "raw": row,
+            "runtime_utc": runtime,
+            "valid_utc": valid,
+            "tmp": _float(_pick(row, "tmp")),
+            "tsd": _float(_pick(row, "tsd")),
+            "txn": _float(_pick(row, "txn")),
+            "xnd": _float(_pick(row, "xnd")),
+        }
+        parsed_rows.append(parsed)
+        by_runtime[runtime].append(parsed)
+
+    forecasts: list[dict] = []
+
+    for item in parsed_rows:
+        txn = item["txn"]
+        valid = item["valid_utc"]
+        runtime = item["runtime_utc"]
+
+        if txn is None:
+            continue
+
+        # NOAA NBM station-card definition: maximum TXN is reported at 00Z
+        # following the 12Z-06Z max-temperature window.
         if valid.hour != 0 or valid.minute != 0:
             continue
 
         target_date = (valid - timedelta(hours=12)).date()
         anchor = datetime.combine(target_date, dtime(anchor_hour), tzinfo=tz)
-        lead_hours = (anchor.astimezone(timezone.utc) - runtime).total_seconds() / 3600.0
+        lead_hours = (
+            anchor.astimezone(timezone.utc) - runtime
+        ).total_seconds() / 3600.0
         if lead_hours < -3 or lead_hours > 168:
             continue
+
+        local_midnight_utc = datetime.combine(
+            target_date, dtime(0), tzinfo=tz
+        ).astimezone(timezone.utc)
+        txn_window_start_utc = datetime.combine(
+            target_date, dtime(12), tzinfo=timezone.utc
+        )
+
+        early_candidates = [
+            candidate
+            for candidate in by_runtime[runtime]
+            if candidate["tmp"] is not None
+            and local_midnight_utc <= candidate["valid_utc"] < txn_window_start_utc
+        ]
+
+        early = None
+        if early_candidates:
+            # Prefer the warmest early-morning point. Break temperature ties in
+            # favor of the earlier valid time to keep selection deterministic.
+            early = max(
+                early_candidates,
+                key=lambda candidate: (
+                    candidate["tmp"],
+                    -candidate["valid_utc"].timestamp(),
+                ),
+            )
+
+        early_high = None if early is None else early["tmp"]
+        early_sigma = None if early is None else early["tsd"]
+
+        if early_high is not None and early_high > txn:
+            forecast_high = early_high
+            forecast_sigma = early_sigma if early_sigma is not None else item["xnd"]
+            forecast_source = "early_tmp"
+            source_valid_utc = early["valid_utc"]
+        else:
+            forecast_high = txn
+            forecast_sigma = item["xnd"]
+            forecast_source = "txn"
+            source_valid_utc = valid
 
         forecasts.append(
             {
                 "target_date": target_date,
                 "runtime_utc": runtime,
                 "valid_utc": valid,
+                "source_valid_utc": source_valid_utc,
                 "lead_hours": lead_hours,
-                "forecast_high_f": txn,
-                "forecast_sigma_f": _float(_pick(row, "xnd")),
+                "forecast_high_f": forecast_high,
+                "forecast_sigma_f": forecast_sigma,
+                "forecast_source": forecast_source,
+                "txn_high_f": txn,
+                "txn_sigma_f": item["xnd"],
+                "early_tmp_high_f": early_high,
+                "early_tmp_sigma_f": early_sigma,
             }
         )
 
@@ -337,11 +415,18 @@ def write_dataset(path: Path, forecasts: list[dict], observations: dict[date, fl
         "target_date",
         "runtime_utc",
         "valid_utc",
+        "source_valid_utc",
         "lead_hours",
         "forecast_high_f",
         "forecast_sigma_f",
+        "forecast_source",
+        "txn_high_f",
+        "txn_sigma_f",
+        "early_tmp_high_f",
+        "early_tmp_sigma_f",
         "actual_high_f",
         "error_f",
+        "txn_error_f",
     ]
     count = 0
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -352,16 +437,40 @@ def write_dataset(path: Path, forecasts: list[dict], observations: dict[date, fl
             if actual is None:
                 continue
             error = actual - item["forecast_high_f"]
+            txn_error = actual - item["txn_high_f"]
             writer.writerow(
                 {
                     "target_date": item["target_date"].isoformat(),
                     "runtime_utc": item["runtime_utc"].isoformat(),
                     "valid_utc": item["valid_utc"].isoformat(),
+                    "source_valid_utc": item["source_valid_utc"].isoformat(),
                     "lead_hours": f"{item['lead_hours']:.2f}",
                     "forecast_high_f": f"{item['forecast_high_f']:.1f}",
-                    "forecast_sigma_f": "" if item["forecast_sigma_f"] is None else f"{item['forecast_sigma_f']:.1f}",
+                    "forecast_sigma_f": (
+                        ""
+                        if item["forecast_sigma_f"] is None
+                        else f"{item['forecast_sigma_f']:.1f}"
+                    ),
+                    "forecast_source": item["forecast_source"],
+                    "txn_high_f": f"{item['txn_high_f']:.1f}",
+                    "txn_sigma_f": (
+                        ""
+                        if item["txn_sigma_f"] is None
+                        else f"{item['txn_sigma_f']:.1f}"
+                    ),
+                    "early_tmp_high_f": (
+                        ""
+                        if item["early_tmp_high_f"] is None
+                        else f"{item['early_tmp_high_f']:.1f}"
+                    ),
+                    "early_tmp_sigma_f": (
+                        ""
+                        if item["early_tmp_sigma_f"] is None
+                        else f"{item['early_tmp_sigma_f']:.1f}"
+                    ),
                     "actual_high_f": f"{actual:.1f}",
                     "error_f": f"{error:.1f}",
+                    "txn_error_f": f"{txn_error:.1f}",
                 }
             )
             count += 1
