@@ -44,6 +44,23 @@ def main():
         print(f"SKIP paper evaluation: {exc}")
         return
 
+    observed_text = (
+        "none"
+        if result["observed_high_f"] is None
+        else (
+            f"{result['observed_high_f']:.1f}F "
+            f"(floor {result['minimum_actual_f']}F)"
+        )
+    )
+    print(
+        f"Paper evaluation {result['event']}: "
+        f"snapshot={result['market_ts']} "
+        f"forecast={result['forecast_high']:.1f}F "
+        f"observed={observed_text} "
+        f"model-lead={result['model_lead_hours']:.1f}h "
+        f"bucket={result['fit'].lead_hours}h"
+    )
+
     conn = connect(args.ledger)
     inserted = 0
 
