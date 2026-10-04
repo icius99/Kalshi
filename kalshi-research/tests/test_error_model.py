@@ -65,6 +65,18 @@ class ErrorModelTests(unittest.TestCase):
             probabilities["KXHIGHNY-26OCT04-T70"],
         )
 
+    def test_empirical_conditioning_removes_impossible_lower_outcomes(self):
+        fit = self.model.nearest(12)
+        pmf = self.model.conditioned_error_pmf(
+            fit,
+            forecast_high_f=65,
+            minimum_actual_f=65,
+        )
+        self.assertAlmostEqual(sum(pmf.values()), 1.0, places=12)
+        self.assertNotIn(-1, pmf)
+        self.assertIn(0, pmf)
+        self.assertIn(1, pmf)
+
     def test_scaled_uncertainty_probabilities_form_partition(self):
         markets = [
             {"market_ticker":"KXHIGHNY-26OCT04-T63","floor_strike":None,"cap_strike":63},
