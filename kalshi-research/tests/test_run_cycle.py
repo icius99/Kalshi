@@ -21,6 +21,7 @@ class PaperCycleTests(unittest.TestCase):
             anchor_hour=15,
             observation_buffer_f=1.0,
             max_snapshot_age_minutes=20.0,
+            min_market_lead_hours=3.0,
             skip_settle=False,
         )
         commands = build_commands(args)
@@ -50,6 +51,7 @@ class PaperCycleTests(unittest.TestCase):
             anchor_hour=15,
             observation_buffer_f=1.0,
             max_snapshot_age_minutes=20.0,
+            min_market_lead_hours=3.0,
             skip_settle=True,
         )
         commands = build_commands(args)

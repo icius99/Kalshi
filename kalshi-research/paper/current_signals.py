@@ -19,6 +19,7 @@ from research.temperature import bucket_from_market
 
 NY = ZoneInfo("America/New_York")
 INTRADAY_CONDITIONING = "nws_observed_high_floor_v1"
+ENTRY_POLICY = "pre_anchor_3h_live_revalidation_v1"
 
 
 class PaperEvaluationSkip(RuntimeError):
@@ -69,6 +70,15 @@ def parse_args():
         type=float,
         default=20.0,
         help="Reject stale collector snapshots; <=0 disables this guard.",
+    )
+    parser.add_argument(
+        "--min-market-lead-hours",
+        type=float,
+        default=3.0,
+        help=(
+            "Do not open new paper positions inside this many hours of the "
+            "3 PM anchor; late-day forecasts are outside the calibrated entry regime."
+        ),
     )
     return parser.parse_args()
 
@@ -143,6 +153,19 @@ def snapshot_age_minutes(
     ).total_seconds() / 60.0
 
 
+def enforce_entry_window(
+    market_lead_hours: float,
+    min_market_lead_hours: float,
+    anchor_hour: int,
+) -> None:
+    if market_lead_hours < min_market_lead_hours:
+        raise PaperEvaluationSkip(
+            f"market is only {market_lead_hours:.1f}h from the "
+            f"{anchor_hour}:00 ET anchor; entry policy requires at least "
+            f"{min_market_lead_hours:.1f}h"
+        )
+
+
 def build_evaluation(args):
     conn = sqlite3.connect(args.db)
     event, market_timestamp = latest_event(conn, args.event)
@@ -160,6 +183,11 @@ def build_evaluation(args):
 
     anchor = datetime.combine(target, time(args.anchor_hour), tzinfo=NY)
     market_lead_hours = lead_hours_to_anchor(anchor, snapshot_dt)
+    enforce_entry_window(
+        market_lead_hours,
+        args.min_market_lead_hours,
+        args.anchor_hour,
+    )
 
     observed = None
     minimum_actual_f = None
@@ -223,6 +251,8 @@ def build_evaluation(args):
             INTRADAY_CONDITIONING if observed is not None else "not_applicable_future"
         ),
         "observation_buffer_f": args.observation_buffer_f,
+        "entry_policy": ENTRY_POLICY,
+        "min_market_lead_hours": args.min_market_lead_hours,
         "fit": fit,
         "probs": probabilities,
         "signals": signals,

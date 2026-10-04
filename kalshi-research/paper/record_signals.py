@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from paper.current_signals import PaperEvaluationSkip, build_evaluation
+from paper.execution import revalidate_signals
 from paper.ledger import connect, has_open_position
 from research.error_model import ModelHorizonUnavailable
 
@@ -26,6 +27,7 @@ def parse_args():
     parser.add_argument("--anchor-hour", type=int, default=15)
     parser.add_argument("--observation-buffer-f", type=float, default=1.0)
     parser.add_argument("--max-snapshot-age-minutes", type=float, default=20.0)
+    parser.add_argument("--min-market-lead-hours", type=float, default=3.0)
     parser.add_argument("--ledger", type=Path, default=Path("paper.db"))
     parser.add_argument(
         "--max-contracts",
@@ -61,10 +63,24 @@ def main():
         f"bucket={result['fit'].lead_hours}h"
     )
 
+    execution_quote_utc, live_markets, live_signals = revalidate_signals(
+        result["markets"],
+        result["probs"],
+        args.min_edge,
+        args.execution_buffer,
+        args.min_qty,
+        args.max_contracts,
+    )
+    if len(live_signals) != len(result["signals"]):
+        print(
+            f"Live quote revalidation changed qualifying signals: "
+            f"{len(result['signals'])} -> {len(live_signals)}"
+        )
+
     conn = connect(args.ledger)
     inserted = 0
 
-    for signal in result["signals"]:
+    for signal in live_signals:
         if has_open_position(conn, signal.market_ticker):
             continue
 
@@ -98,8 +114,10 @@ def main():
                 intraday_conditioning,
                 observed_high_f,
                 minimum_actual_f,
-                observation_buffer_f
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                observation_buffer_f,
+                entry_policy,
+                execution_quote_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(),
@@ -126,6 +144,8 @@ def main():
                 result["observed_high_f"],
                 result["minimum_actual_f"],
                 result["observation_buffer_f"],
+                result["entry_policy"],
+                execution_quote_utc,
             ),
         )
         inserted += 1

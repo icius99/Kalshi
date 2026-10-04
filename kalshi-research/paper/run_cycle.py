@@ -32,6 +32,7 @@ def parse_args():
     parser.add_argument("--anchor-hour", type=int, default=15)
     parser.add_argument("--observation-buffer-f", type=float, default=1.0)
     parser.add_argument("--max-snapshot-age-minutes", type=float, default=20.0)
+    parser.add_argument("--min-market-lead-hours", type=float, default=3.0)
     parser.add_argument("--skip-settle", action="store_true")
     return parser.parse_args()
 
@@ -77,6 +78,8 @@ def build_commands(args) -> list[list[str]]:
         str(args.observation_buffer_f),
         "--max-snapshot-age-minutes",
         str(args.max_snapshot_age_minutes),
+        "--min-market-lead-hours",
+        str(args.min_market_lead_hours),
     ]
     if args.event:
         record.extend(["--event", args.event])

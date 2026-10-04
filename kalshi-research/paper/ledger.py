@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS paper_signals (
     observed_high_f REAL,
     minimum_actual_f REAL,
     observation_buffer_f REAL,
+    entry_policy TEXT,
+    execution_quote_utc TEXT,
     invalidation_reason TEXT,
     status TEXT NOT NULL DEFAULT 'OPEN',
     settlement_yes INTEGER,
@@ -66,6 +68,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "observed_high_f": "REAL",
         "minimum_actual_f": "REAL",
         "observation_buffer_f": "REAL",
+        "entry_policy": "TEXT",
+        "execution_quote_utc": "TEXT",
         "invalidation_reason": "TEXT",
     }
     added_conditioning_column = "intraday_conditioning" not in columns
@@ -81,6 +85,16 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             UPDATE paper_signals
             SET status='INVALIDATED',
                 invalidation_reason='pre_intraday_conditioning_v1'
+            WHERE status='OPEN'
+            """
+        )
+
+    if "entry_policy" not in columns:
+        conn.execute(
+            """
+            UPDATE paper_signals
+            SET status='INVALIDATED',
+                invalidation_reason='pre_entry_policy_v1'
             WHERE status='OPEN'
             """
         )
