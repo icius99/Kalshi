@@ -15,6 +15,8 @@ class ErrorModelTests(unittest.TestCase):
                         "sd_error_f": 1.2,
                         "rmse_f": 1.3,
                         "error_counts": {"-1": 1, "0": 3, "1": 1},
+                        "nbm_uncertainty_n": 5,
+                        "nbm_uncertainty_scale": 1.25,
                     },
                     "24": {
                         "n": 5,
@@ -22,6 +24,8 @@ class ErrorModelTests(unittest.TestCase):
                         "sd_error_f": 2.0,
                         "rmse_f": 2.1,
                         "error_counts": {"-2": 1, "0": 2, "1": 1, "2": 1},
+                        "nbm_uncertainty_n": 5,
+                        "nbm_uncertainty_scale": 1.4,
                     },
                 },
             }
@@ -60,6 +64,51 @@ class ErrorModelTests(unittest.TestCase):
             probabilities["KXHIGHNY-26OCT04-B65.5"],
             probabilities["KXHIGHNY-26OCT04-T70"],
         )
+
+    def test_scaled_uncertainty_probabilities_form_partition(self):
+        markets = [
+            {"market_ticker":"KXHIGHNY-26OCT04-T63","floor_strike":None,"cap_strike":63},
+            {"market_ticker":"KXHIGHNY-26OCT04-B63.5","floor_strike":63,"cap_strike":64},
+            {"market_ticker":"KXHIGHNY-26OCT04-B65.5","floor_strike":65,"cap_strike":66},
+            {"market_ticker":"KXHIGHNY-26OCT04-B67.5","floor_strike":67,"cap_strike":68},
+            {"market_ticker":"KXHIGHNY-26OCT04-B69.5","floor_strike":69,"cap_strike":70},
+            {"market_ticker":"KXHIGHNY-26OCT04-T70","floor_strike":70,"cap_strike":None},
+        ]
+        fit, probabilities = self.model.probabilities_for_markets_scaled_uncertainty(
+            markets,
+            forecast_high_f=65,
+            forecast_sigma_f=2,
+            lead_hours=12,
+            max_distance=2,
+        )
+        self.assertEqual(fit.lead_hours, 12)
+        self.assertAlmostEqual(sum(probabilities.values()), 1.0, places=12)
+        self.assertGreater(
+            probabilities["KXHIGHNY-26OCT04-B65.5"],
+            probabilities["KXHIGHNY-26OCT04-T70"],
+        )
+
+    def test_scaled_uncertainty_requires_fitted_scale(self):
+        legacy = ForecastErrorModel(
+            {
+                "buckets": {
+                    "12": {
+                        "n": 1,
+                        "bias_f": 0,
+                        "sd_error_f": 1,
+                        "rmse_f": 1,
+                        "error_counts": {"0": 1},
+                    }
+                }
+            }
+        )
+        with self.assertRaises(ValueError):
+            legacy.probabilities_for_markets_scaled_uncertainty(
+                [],
+                forecast_high_f=65,
+                forecast_sigma_f=2,
+                lead_hours=12,
+            )
 
     def test_forecast_definition_guard(self):
         compatible = ForecastErrorModel(
