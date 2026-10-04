@@ -19,6 +19,8 @@ class PaperCycleTests(unittest.TestCase):
             max_contracts=25,
             max_model_distance=6.0,
             anchor_hour=15,
+            observation_buffer_f=1.0,
+            max_snapshot_age_minutes=20.0,
             skip_settle=False,
         )
         commands = build_commands(args)
@@ -46,6 +48,8 @@ class PaperCycleTests(unittest.TestCase):
             max_contracts=25,
             max_model_distance=6.0,
             anchor_hour=15,
+            observation_buffer_f=1.0,
+            max_snapshot_age_minutes=20.0,
             skip_settle=True,
         )
         commands = build_commands(args)

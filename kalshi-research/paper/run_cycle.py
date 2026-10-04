@@ -30,6 +30,8 @@ def parse_args():
     parser.add_argument("--max-contracts", type=int, default=25)
     parser.add_argument("--max-model-distance", type=float, default=6.0)
     parser.add_argument("--anchor-hour", type=int, default=15)
+    parser.add_argument("--observation-buffer-f", type=float, default=1.0)
+    parser.add_argument("--max-snapshot-age-minutes", type=float, default=20.0)
     parser.add_argument("--skip-settle", action="store_true")
     return parser.parse_args()
 
@@ -71,6 +73,10 @@ def build_commands(args) -> list[list[str]]:
         str(args.max_model_distance),
         "--anchor-hour",
         str(args.anchor_hour),
+        "--observation-buffer-f",
+        str(args.observation_buffer_f),
+        "--max-snapshot-age-minutes",
+        str(args.max_snapshot_age_minutes),
     ]
     if args.event:
         record.extend(["--event", args.event])

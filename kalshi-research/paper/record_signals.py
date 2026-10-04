@@ -5,7 +5,7 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
-from paper.current_signals import build_evaluation
+from paper.current_signals import PaperEvaluationSkip, build_evaluation
 from paper.ledger import connect, has_open_position
 from research.error_model import ModelHorizonUnavailable
 
@@ -24,6 +24,8 @@ def parse_args():
     parser.add_argument("--min-qty", type=float, default=10.0)
     parser.add_argument("--max-model-distance", type=float, default=6.0)
     parser.add_argument("--anchor-hour", type=int, default=15)
+    parser.add_argument("--observation-buffer-f", type=float, default=1.0)
+    parser.add_argument("--max-snapshot-age-minutes", type=float, default=20.0)
     parser.add_argument("--ledger", type=Path, default=Path("paper.db"))
     parser.add_argument(
         "--max-contracts",
@@ -38,7 +40,7 @@ def main():
     args = parse_args()
     try:
         result = build_evaluation(args)
-    except ModelHorizonUnavailable as exc:
+    except (ModelHorizonUnavailable, PaperEvaluationSkip) as exc:
         print(f"SKIP paper evaluation: {exc}")
         return
 
@@ -75,8 +77,12 @@ def main():
                 probability_method,
                 forecast_high_f,
                 forecast_sigma_f,
-                forecast_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                forecast_source,
+                intraday_conditioning,
+                observed_high_f,
+                minimum_actual_f,
+                observation_buffer_f
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(),
@@ -99,6 +105,10 @@ def main():
                 result["forecast_high"],
                 result["forecast_sigma"],
                 result["forecast_source"],
+                result["intraday_conditioning"],
+                result["observed_high_f"],
+                result["minimum_actual_f"],
+                result["observation_buffer_f"],
             ),
         )
         inserted += 1
