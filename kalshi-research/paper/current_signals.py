@@ -100,6 +100,16 @@ def load_markets(
     return [dict(row) for row in rows]
 
 
+
+def lead_hours_to_anchor(
+    anchor: datetime,
+    reference_utc: datetime,
+) -> float:
+    return (
+        anchor.astimezone(timezone.utc) - reference_utc.astimezone(timezone.utc)
+    ).total_seconds() / 3600.0
+
+
 def build_evaluation(args):
     conn = sqlite3.connect(args.db)
     event, market_timestamp = latest_event(conn, args.event)
@@ -109,19 +119,18 @@ def build_evaluation(args):
     target = event_date(event)
     snapshot_dt = datetime.fromisoformat(market_timestamp).astimezone(timezone.utc)
     anchor = datetime.combine(target, time(args.anchor_hour), tzinfo=NY)
-    lead_hours = (
-        anchor.astimezone(timezone.utc) - snapshot_dt
-    ).total_seconds() / 3600.0
+    market_lead_hours = lead_hours_to_anchor(anchor, snapshot_dt)
 
     nbm = fetch_forecast_asof(target, snapshot_dt, anchor_hour=args.anchor_hour)
     forecast_high = float(nbm["forecast_high_f"])
+    model_lead_hours = lead_hours_to_anchor(anchor, nbm["runtime_utc"])
 
     model = ForecastErrorModel.load(args.model)
     model.require_forecast_definition(FORECAST_DEFINITION)
     fit, probabilities = model.probabilities_for_markets(
         markets,
         forecast_high,
-        lead_hours,
+        model_lead_hours,
         args.max_model_distance,
     )
     signals = evaluate_probabilities(
@@ -147,7 +156,9 @@ def build_evaluation(args):
         "forecast_high": forecast_high,
         "forecast_sigma": nbm.get("forecast_sigma_f"),
         "forecast_source": nbm.get("forecast_source"),
-        "lead_hours": lead_hours,
+        "lead_hours": model_lead_hours,
+        "model_lead_hours": model_lead_hours,
+        "market_lead_hours": market_lead_hours,
         "fit": fit,
         "probs": probabilities,
         "signals": signals,
@@ -165,8 +176,12 @@ def main():
     print(f"NBM runtime:     {nbm['runtime_utc'].isoformat()}")
     print(f"NBM high:        {result['forecast_high']:.1f} F")
     print(
-        f"Lead:            {result['lead_hours']:.1f} h -> "
+        f"Forecast lead:   {result['model_lead_hours']:.1f} h -> "
         f"{fit.lead_hours} h error bucket (n={fit.n})"
+    )
+    print(
+        f"Market lead:     {result['market_lead_hours']:.1f} h "
+        "(snapshot to 3 PM anchor; not used for calibration)"
     )
     print(f"Predictor:       {FORECAST_DEFINITION}")
     print(
