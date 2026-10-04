@@ -81,14 +81,16 @@ def audit(rows: list[dict], tolerance: float) -> dict:
     issues = []
     by_date = defaultdict(list)
     by_lead = defaultdict(list)
+    unbucketed_leads = Counter()
 
     for row in rows:
         by_date[row["target_date"]].append(row)
         bucket = nearest_lead(row["lead_hours"], tolerance)
         if bucket is None:
-            issues.append(
-                f"{row['target_date']}: unexpected lead {row['lead_hours']:.1f}h"
-            )
+            # Valid archived NBM cycles can fall between the nominal model
+            # horizons. They are intentionally excluded by historical.sampling
+            # and are not structural data errors.
+            unbucketed_leads[round(row["lead_hours"], 1)] += 1
         else:
             by_lead[bucket].append(row)
 
@@ -114,6 +116,8 @@ def audit(rows: list[dict], tolerance: float) -> dict:
         "first_date": dates[0],
         "last_date": dates[-1],
         "issues": issues,
+        "unbucketed_raw_rows": sum(unbucketed_leads.values()),
+        "unbucketed_leads": dict(sorted(unbucketed_leads.items())),
         "by_lead": {},
     }
 
@@ -189,6 +193,17 @@ def main():
         f"Independent sampled rows used by modeling: {len(sampled):,} "
         "(max one target-date / lead-bucket)"
     )
+    print(
+        f"Raw rows outside nominal lead windows: "
+        f"{result['unbucketed_raw_rows']:,} "
+        "(valid archive cycles, excluded from modeling)"
+    )
+    if result["unbucketed_leads"]:
+        lead_counts = ", ".join(
+            f"{lead:g}h={count:,}"
+            for lead, count in result["unbucketed_leads"].items()
+        )
+        print(f"  {lead_counts}")
     print()
 
     _print_stats("Raw archived 6-hour NBM runs", result["by_lead"])
@@ -223,6 +238,11 @@ def main():
         raise SystemExit(1)
 
     print("AUDIT PASSED: no structural inconsistencies found.")
+    if result["unbucketed_raw_rows"]:
+        print(
+            "Note: out-of-window raw cycles were observed as expected and "
+            "were not included in model sampling."
+        )
 
 
 if __name__ == "__main__":
