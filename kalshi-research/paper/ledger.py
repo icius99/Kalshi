@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS paper_signals (
     forecast_high_f REAL,
     forecast_sigma_f REAL,
     forecast_source TEXT,
+    intraday_conditioning TEXT,
+    observed_high_f REAL,
+    minimum_actual_f REAL,
+    observation_buffer_f REAL,
+    invalidation_reason TEXT,
     status TEXT NOT NULL DEFAULT 'OPEN',
     settlement_yes INTEGER,
     gross_pnl REAL,
@@ -57,12 +62,28 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "forecast_high_f": "REAL",
         "forecast_sigma_f": "REAL",
         "forecast_source": "TEXT",
+        "intraday_conditioning": "TEXT",
+        "observed_high_f": "REAL",
+        "minimum_actual_f": "REAL",
+        "observation_buffer_f": "REAL",
+        "invalidation_reason": "TEXT",
     }
+    added_conditioning_column = "intraday_conditioning" not in columns
     for name, sql_type in additions.items():
         if name not in columns:
             conn.execute(
                 f"ALTER TABLE paper_signals ADD COLUMN {name} {sql_type}"
             )
+
+    if added_conditioning_column:
+        conn.execute(
+            """
+            UPDATE paper_signals
+            SET status='INVALIDATED',
+                invalidation_reason='pre_intraday_conditioning_v1'
+            WHERE status='OPEN'
+            """
+        )
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
