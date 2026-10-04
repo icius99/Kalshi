@@ -1,10 +1,12 @@
+import json
 import sys
+import tempfile
 import unittest
 from argparse import Namespace
 from datetime import date
 from pathlib import Path
 
-from historical.run_research_pipeline import build_commands, make_paths
+from historical.run_research_pipeline import build_commands, make_paths, validate_promotion
 
 
 class ResearchPipelineTests(unittest.TestCase):
@@ -91,6 +93,51 @@ class ResearchPipelineTests(unittest.TestCase):
             commands[0][0:3],
             [sys.executable, "-m", "historical.audit_dataset"],
         )
+
+    def test_promotion_requires_current_schema_and_walkforward_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(
+                date(2021, 1, 1),
+                date(2026, 9, 30),
+                root / "hist",
+                root / "models",
+            )
+            paths.model.parent.mkdir(parents=True, exist_ok=True)
+            paths.model.write_text(
+                json.dumps(
+                    {
+                        "version": 4,
+                        "forecast_definition": "calendar_day_nbm_txn_plus_early_tmp_v1",
+                        "default_probability_method": "empirical_integer_errors",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            paths.walkforward.write_text(
+                json.dumps({"recommended_probability_method": "empirical"}),
+                encoding="utf-8",
+            )
+            result = validate_promotion(paths)
+            self.assertEqual(result["model_version"], 4)
+
+    def test_promotion_rejects_old_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = make_paths(
+                date(2021, 1, 1),
+                date(2026, 9, 30),
+                root / "hist",
+                root / "models",
+            )
+            paths.model.parent.mkdir(parents=True, exist_ok=True)
+            paths.model.write_text(json.dumps({"version": 3}), encoding="utf-8")
+            paths.walkforward.write_text(
+                json.dumps({"recommended_probability_method": "empirical"}),
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                validate_promotion(paths)
 
 
 if __name__ == "__main__":
