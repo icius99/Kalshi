@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from collections import defaultdict
 from datetime import date
@@ -30,6 +31,11 @@ def parse_args():
     parser.add_argument("--last-test-year", type=int)
     parser.add_argument("--min-train", type=int, default=300)
     parser.add_argument("--min-test", type=int, default=100)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("data/models/nbm_walkforward.json"),
+    )
     return parser.parse_args()
 
 
@@ -128,6 +134,15 @@ def main():
         by_bucket[row["lead_bucket"]].append(row)
 
     per_bucket_results = defaultdict(list)
+    report = {
+        "dataset": str(args.dataset),
+        "first_test_year": args.first_test_year,
+        "last_test_year": last_year,
+        "lead_buckets_hours": list(buckets),
+        "folds": [],
+        "aggregate_by_lead": {},
+        "aggregate_all": None,
+    }
 
     print("Walk-forward annual probabilistic comparison")
     print("Lower log loss is better. Each test year uses only prior-year training data.")
@@ -154,6 +169,7 @@ def main():
             result["year"] = year
             result["lead_bucket"] = bucket
             per_bucket_results[bucket].append(result)
+            report["folds"].append(result.copy())
 
             losses = result["losses"]
             print(
@@ -177,6 +193,7 @@ def main():
             continue
         all_results.extend(results)
         agg = aggregate(results)
+        report["aggregate_by_lead"][str(bucket)] = agg
         losses = agg["mean_losses"]
         wins = ", ".join(
             f"{name}={count}"
@@ -191,6 +208,7 @@ def main():
 
     if all_results:
         agg = aggregate(all_results)
+        report["aggregate_all"] = agg
         losses = agg["mean_losses"]
         wins = ", ".join(
             f"{name}={count}"
@@ -205,6 +223,11 @@ def main():
             f"scaledXND={losses['scaled_xnd']:.3f} "
             f"wins[{wins}]"
         )
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print()
+    print(f"Wrote walk-forward report to {args.output}")
 
 
 if __name__ == "__main__":
