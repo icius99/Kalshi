@@ -40,7 +40,7 @@ class ResearchPipelineTests(unittest.TestCase):
         )
         commands = build_commands(args, paths)
 
-        self.assertEqual(len(commands), 4)
+        self.assertEqual(len(commands), 5)
         self.assertEqual(
             commands[0][0:3],
             [sys.executable, "-m", "historical.build_nbm_history"],
@@ -51,11 +51,15 @@ class ResearchPipelineTests(unittest.TestCase):
         )
         self.assertEqual(
             commands[2][0:3],
-            [sys.executable, "-m", "historical.validate_chronological"],
+            [sys.executable, "-m", "historical.compare_calendar_high"],
         )
-        self.assertIn("--test-start", commands[2])
         self.assertEqual(
             commands[3][0:3],
+            [sys.executable, "-m", "historical.validate_chronological"],
+        )
+        self.assertIn("--test-start", commands[3])
+        self.assertEqual(
+            commands[4][0:3],
             [sys.executable, "-m", "historical.forecast_error"],
         )
 
@@ -74,7 +78,7 @@ class ResearchPipelineTests(unittest.TestCase):
             Path("data/models"),
         )
         commands = build_commands(args, paths)
-        self.assertEqual(len(commands), 3)
+        self.assertEqual(len(commands), 4)
         self.assertEqual(
             commands[0][0:3],
             [sys.executable, "-m", "historical.audit_dataset"],
