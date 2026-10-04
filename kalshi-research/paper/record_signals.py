@@ -7,6 +7,7 @@ from pathlib import Path
 
 from paper.current_signals import build_evaluation
 from paper.ledger import connect, has_open_position
+from research.error_model import ModelHorizonUnavailable
 
 
 def parse_args():
@@ -35,7 +36,12 @@ def parse_args():
 
 def main():
     args = parse_args()
-    result = build_evaluation(args)
+    try:
+        result = build_evaluation(args)
+    except ModelHorizonUnavailable as exc:
+        print(f"SKIP paper evaluation: {exc}")
+        return
+
     conn = connect(args.ledger)
     inserted = 0
 

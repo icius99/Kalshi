@@ -8,6 +8,10 @@ from statistics import NormalDist
 from research.temperature import bucket_from_market
 
 
+class ModelHorizonUnavailable(ValueError):
+    """No calibrated lead bucket is close enough to the forecast runtime."""
+
+
 @dataclass(frozen=True)
 class ErrorBucket:
     lead_hours: int
@@ -70,8 +74,9 @@ class ForecastErrorModel:
     def nearest(self, lead_hours: float, max_distance: float | None = None) -> ErrorBucket:
         bucket = min(self.buckets.values(), key=lambda x: abs(x.lead_hours - lead_hours))
         if max_distance is not None and abs(bucket.lead_hours - lead_hours) > max_distance:
-            raise ValueError(
-                f"nearest fitted lead bucket ({bucket.lead_hours}h) is too far from {lead_hours:.1f}h"
+            raise ModelHorizonUnavailable(
+                f"nearest fitted lead bucket ({bucket.lead_hours}h) "
+                f"is too far from forecast lead {lead_hours:.1f}h"
             )
         return bucket
 
