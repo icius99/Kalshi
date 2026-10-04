@@ -8,6 +8,7 @@ from historical.build_nbm_history import (
     DEFAULT_MODEL,
     DEFAULT_STATION,
     DEFAULT_TZ,
+    FORECAST_DEFINITION,
     IEM_MOS,
     USER_AGENT,
     extract_daily_high_forecasts,
