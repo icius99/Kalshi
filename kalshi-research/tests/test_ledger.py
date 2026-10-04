@@ -40,6 +40,27 @@ class LedgerTests(unittest.TestCase):
             self.assertTrue(has_open_position(conn, "ABC"))
             conn.close()
 
+    def test_provenance_columns_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "paper.db"
+            conn = connect(path)
+            columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(paper_signals)"
+                ).fetchall()
+            }
+            for expected in (
+                "model_version",
+                "forecast_definition",
+                "probability_method",
+                "forecast_high_f",
+                "forecast_sigma_f",
+                "forecast_source",
+            ):
+                self.assertIn(expected, columns)
+            conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

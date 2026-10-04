@@ -210,6 +210,9 @@ def main():
         agg = aggregate(all_results)
         report["aggregate_all"] = agg
         losses = agg["mean_losses"]
+        report["recommended_probability_method"] = min(
+            losses, key=losses.get
+        )
         wins = ", ".join(
             f"{name}={count}"
             for name, count in sorted(agg["wins"].items())
@@ -222,6 +225,10 @@ def main():
             f"globalN={losses['global_normal']:.3f} "
             f"scaledXND={losses['scaled_xnd']:.3f} "
             f"wins[{wins}]"
+        )
+        print(
+            "Recommended probability method: "
+            f"{report['recommended_probability_method']}"
         )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

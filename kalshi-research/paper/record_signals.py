@@ -63,8 +63,14 @@ def main():
                 estimated_edge,
                 lead_hours,
                 model_lead_bucket,
-                model_sample_n
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                model_sample_n,
+                model_version,
+                forecast_definition,
+                probability_method,
+                forecast_high_f,
+                forecast_sigma_f,
+                forecast_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(),
@@ -81,6 +87,12 @@ def main():
                 result["lead_hours"],
                 result["fit"].lead_hours,
                 result["fit"].n,
+                result["model_version"],
+                result["forecast_definition"],
+                result["probability_method"],
+                result["forecast_high"],
+                result["forecast_sigma"],
+                result["forecast_source"],
             ),
         )
         inserted += 1

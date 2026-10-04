@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS paper_signals (
     lead_hours REAL NOT NULL,
     model_lead_bucket INTEGER NOT NULL,
     model_sample_n INTEGER NOT NULL,
+    model_version INTEGER,
+    forecast_definition TEXT,
+    probability_method TEXT,
+    forecast_high_f REAL,
+    forecast_sigma_f REAL,
+    forecast_source TEXT,
     status TEXT NOT NULL DEFAULT 'OPEN',
     settlement_yes INTEGER,
     gross_pnl REAL,
@@ -43,6 +49,20 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE paper_signals ADD COLUMN net_pnl REAL"
         )
+
+    additions = {
+        "model_version": "INTEGER",
+        "forecast_definition": "TEXT",
+        "probability_method": "TEXT",
+        "forecast_high_f": "REAL",
+        "forecast_sigma_f": "REAL",
+        "forecast_source": "TEXT",
+    }
+    for name, sql_type in additions.items():
+        if name not in columns:
+            conn.execute(
+                f"ALTER TABLE paper_signals ADD COLUMN {name} {sql_type}"
+            )
 
 
 def connect(path: str | Path) -> sqlite3.Connection:

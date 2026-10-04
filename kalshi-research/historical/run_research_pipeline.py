@@ -9,12 +9,15 @@ requested with --promote-model.
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+
+from historical.build_nbm_history import FORECAST_DEFINITION
 
 
 DEFAULT_BUCKETS = "12,24,36,48,60"
@@ -147,6 +150,58 @@ def build_commands(args, paths: PipelinePaths) -> list[list[str]]:
     return commands
 
 
+def validate_promotion(paths: PipelinePaths) -> dict:
+    """Refuse to promote stale or evidence-incompatible calibration artifacts."""
+    if not paths.model.exists():
+        raise SystemExit(f"Model file does not exist: {paths.model}")
+    if not paths.walkforward.exists():
+        raise SystemExit(f"Walk-forward report does not exist: {paths.walkforward}")
+
+    model = json.loads(paths.model.read_text(encoding="utf-8"))
+    walkforward = json.loads(paths.walkforward.read_text(encoding="utf-8"))
+
+    if int(model.get("version", 0)) < 4:
+        raise SystemExit(
+            "Refusing promotion: model schema is older than v4. "
+            "Rerun the current pipeline with --skip-build first."
+        )
+    if model.get("forecast_definition") != FORECAST_DEFINITION:
+        raise SystemExit(
+            "Refusing promotion: model forecast_definition does not match "
+            f"runtime predictor {FORECAST_DEFINITION!r}."
+        )
+
+    default_method = model.get("default_probability_method")
+    recommendation = walkforward.get("recommended_probability_method")
+    if recommendation is None:
+        losses = (walkforward.get("aggregate_all") or {}).get("mean_losses") or {}
+        if losses:
+            recommendation = min(losses, key=losses.get)
+
+    mapping = {
+        "empirical_integer_errors": "empirical",
+        "scaled_nbm_uncertainty_normal": "scaled_xnd",
+    }
+    expected = mapping.get(default_method)
+    if expected is None:
+        raise SystemExit(
+            f"Refusing promotion: unsupported default probability method {default_method!r}."
+        )
+    if recommendation != expected:
+        raise SystemExit(
+            "Refusing promotion: walk-forward evidence recommends "
+            f"{recommendation!r}, but model default is {default_method!r}."
+        )
+
+    return {
+        "model_version": model["version"],
+        "forecast_definition": model["forecast_definition"],
+        "default_probability_method": default_method,
+        "walkforward_recommendation": recommendation,
+    }
+
+
+
 def run_command(command: list[str]) -> None:
     print()
     print("$ " + " ".join(command), flush=True)
@@ -183,9 +238,16 @@ def main():
         run_command(command)
 
     if args.promote_model:
+        promotion = validate_promotion(paths)
         shutil.copy2(paths.model, paths.promoted_model)
         print()
         print(f"Promoted validated model to {paths.promoted_model}")
+        print(
+            "  "
+            f"schema=v{promotion['model_version']} "
+            f"predictor={promotion['forecast_definition']} "
+            f"method={promotion['default_probability_method']}"
+        )
     else:
         print()
         print("Model was NOT promoted to the live default path.")
