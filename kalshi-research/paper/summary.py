@@ -72,6 +72,25 @@ def main():
             )
             by_model.setdefault(key, []).append(row)
 
+        by_event = {}
+        for row in closed:
+            by_event.setdefault(row["event_ticker"], []).append(row)
+
+        print()
+        print("Closed P&L by event")
+        for event, event_rows in sorted(by_event.items()):
+            event_net = sum(row["net_pnl"] for row in event_rows)
+            event_capital = sum(
+                row["entry_price"] * row["quantity"] + row["entry_fee"]
+                for row in event_rows
+            )
+            event_roi = event_net / event_capital if event_capital else 0.0
+            print(
+                f"  {event}: positions={len(event_rows)} "
+                f"capital={event_capital:.2f} net={event_net:+.2f} "
+                f"roi={event_roi:+.1%}"
+            )
+
         print()
         print("Closed P&L by model generation")
         for key, model_rows in sorted(
