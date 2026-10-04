@@ -1,60 +1,45 @@
-# Paper-trading layer
+# Paper-trading loop
 
-This layer is intentionally separate from the live collector and contains **no authenticated trading code**.
+The paper layer never places real orders. It reads collected Kalshi snapshots,
+reconstructs the contemporaneous NBM forecast, applies the promoted calibration
+model, and records qualifying simulated entries in `paper.db`.
 
-## 1. Inspect the current model vs market
+## One maintenance cycle
 
-After the historical NBM error model exists:
+From `kalshi-research/`:
 
-\`\`\`bash
-python -m paper.current_signals \
-  --db kalshi.db \
-  --model data/models/nbm_error_model.json
-\`\`\`
+```bash
+python -m paper.run_cycle
+```
 
-The comparator reconstructs the latest **NBM/NBS forecast that was actually available at the Kalshi snapshot timestamp**. This avoids applying an NBM historical error distribution to the different public NWS point-forecast product.
+One cycle:
 
-Defaults are intentionally conservative:
+1. checks open paper positions against Kalshi's public settlement fields;
+2. settles any resolved positions;
+3. evaluates the latest collected `KXHIGHNY` market snapshot;
+4. records new qualifying simulated positions.
 
-- minimum modeled edge: 5 percentage points
-- execution/slippage reserve: 1 cent per contract
-- minimum displayed top-of-book quantity: 10 contracts
-- historical lead-time model must be within 8 hours of the current lead time
+The cycle is designed to be safe to run repeatedly. The ledger prevents a
+second open paper position in the same market contract.
 
-The execution reserve is **not** the exact Kalshi fee schedule.
+The promoted model at `data/models/nbm_error_model.json` must match the current
+versioned forecast definition. A stale or legacy model is rejected.
 
-## 2. Record qualifying paper positions
+## Defaults
 
-\`\`\`bash
-python -m paper.record_signals
-\`\`\`
+- minimum modeled net edge: 5%
+- execution/slippage reserve: 0.5 cents per contract
+- minimum visible top-of-book quantity: 10 contracts
+- maximum simulated position: 25 contracts
+- nearest calibrated lead bucket must be within 6 hours
 
-Paper positions go into a separate local \`paper.db\`. Only one open position is allowed per market contract so five-minute snapshots do not create hundreds of highly correlated pseudo-trades.
+These are research defaults, not recommendations for real-money trading.
 
-The default paper size is capped at 25 contracts and can never exceed displayed top-of-book quantity.
+## Reporting
 
-## 3. Settle resolved positions
-
-\`\`\`bash
-python -m paper.settle
-\`\`\`
-
-This uses Kalshi's public market endpoint and \`settlement_value_dollars\`; it does not require an API key.
-
-## 4. Review results
-
-\`\`\`bash
+```bash
 python -m paper.summary
-\`\`\`
+```
 
-Reported P&L is gross of exact Kalshi transaction fees until the fee model is implemented.
-
-## Design rules
-
-- Never use a model run published after the market snapshot being evaluated.
-- Never substitute midpoint for executable ask when deciding an entry.
-- Missing bid/ask means that side is not executable in the simulation.
-- Require visible top-of-book size for the full paper position.
-- Keep paper-trading storage separate from \`kalshi.db\`.
-- Do not count repeated five-minute observations as independent positions.
-- No real-money trading until chronological out-of-sample testing, exact fees, and slippage stress tests are complete.
+The summary reports aggregate net P&L, event-level correlated exposure, and
+performance by model generation/probability method.
