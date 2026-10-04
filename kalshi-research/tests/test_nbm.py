@@ -60,6 +60,69 @@ class NBMSelectionTests(unittest.TestCase):
         self.assertEqual(forecasts[0]["forecast_high_f"], 66.0)
         self.assertEqual(forecasts[0]["target_date"], date(2026, 10, 4))
 
+    def test_early_morning_tmp_can_override_txn_for_calendar_day(self):
+        rows = [
+            {
+                "runtime": "2022-02-03T00:00:00Z",
+                "ftime": "2022-02-04T06:00:00Z",
+                "tmp": "56",
+                "tsd": "3",
+            },
+            {
+                "runtime": "2022-02-03T00:00:00Z",
+                "ftime": "2022-02-04T09:00:00Z",
+                "tmp": "52",
+                "tsd": "2",
+            },
+            {
+                "runtime": "2022-02-03T00:00:00Z",
+                "ftime": "2022-02-05T00:00:00Z",
+                "txn": "42",
+                "xnd": "7",
+            },
+        ]
+        forecasts = extract_daily_high_forecasts(
+            rows,
+            "America/New_York",
+            15,
+        )
+        self.assertEqual(len(forecasts), 1)
+        forecast = forecasts[0]
+        self.assertEqual(forecast["target_date"], date(2022, 2, 4))
+        self.assertEqual(forecast["forecast_high_f"], 56.0)
+        self.assertEqual(forecast["forecast_sigma_f"], 3.0)
+        self.assertEqual(forecast["forecast_source"], "early_tmp")
+        self.assertEqual(forecast["txn_high_f"], 42.0)
+
+    def test_tmp_before_local_midnight_is_not_used(self):
+        rows = [
+            {
+                "runtime": "2022-02-03T00:00:00Z",
+                "ftime": "2022-02-04T03:00:00Z",
+                "tmp": "60",
+                "tsd": "2",
+            },
+            {
+                "runtime": "2022-02-03T00:00:00Z",
+                "ftime": "2022-02-04T06:00:00Z",
+                "tmp": "40",
+                "tsd": "2",
+            },
+            {
+                "runtime": "2022-02-03T00:00:00Z",
+                "ftime": "2022-02-05T00:00:00Z",
+                "txn": "42",
+                "xnd": "4",
+            },
+        ]
+        forecasts = extract_daily_high_forecasts(
+            rows,
+            "America/New_York",
+            15,
+        )
+        self.assertEqual(forecasts[0]["forecast_high_f"], 42.0)
+        self.assertEqual(forecasts[0]["forecast_source"], "txn")
+
 
 if __name__ == "__main__":
     unittest.main()
