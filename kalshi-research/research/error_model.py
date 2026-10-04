@@ -20,6 +20,9 @@ class ErrorBucket:
 class ForecastErrorModel:
     def __init__(self, payload: dict):
         self.payload = payload
+        self.forecast_definition = payload.get("forecast_definition")
+        self.observation_definition = payload.get("observation_definition")
+        self.model_version = payload.get("version")
         self.smoothing_alpha = float(payload.get("empirical_smoothing_alpha", 0.1))
         if self.smoothing_alpha <= 0:
             raise ValueError("empirical smoothing alpha must be positive")
@@ -44,6 +47,16 @@ class ForecastErrorModel:
     @classmethod
     def load(cls, path: str | Path) -> "ForecastErrorModel":
         return cls(json.loads(Path(path).read_text(encoding="utf-8")))
+
+    def require_forecast_definition(self, expected: str) -> None:
+        if self.forecast_definition != expected:
+            actual = self.forecast_definition or "<missing/legacy>"
+            raise ValueError(
+                "forecast/model mismatch: this runtime uses "
+                f"{expected!r}, but the loaded calibration model declares "
+                f"{actual!r}. Rebuild and promote the model with the current "
+                "historical pipeline before paper-signal use."
+            )
 
     def nearest(self, lead_hours: float, max_distance: float | None = None) -> ErrorBucket:
         bucket = min(self.buckets.values(), key=lambda x: abs(x.lead_hours - lead_hours))
