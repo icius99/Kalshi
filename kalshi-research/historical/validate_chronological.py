@@ -120,6 +120,11 @@ def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
         row["actual"] - (row["forecast"] + bias)
         for row in test
     ]
+    txn_test_errors = [
+        row["txn_error"]
+        for row in test
+        if row.get("txn_error") is not None
+    ]
 
     log_losses = []
     no_bias_normal_log_losses = []
@@ -188,6 +193,18 @@ def evaluate_bucket(train: list[dict], test: list[dict]) -> dict:
         "test_raw_bias_f": round(mean(raw_errors), 4),
         "test_corrected_bias_f": round(mean(corrected_errors), 4),
         "test_raw_rmse_f": round(math.sqrt(mean(x * x for x in raw_errors)), 4),
+        "test_raw_mae_f": round(mean(abs(x) for x in raw_errors), 4),
+        "test_txn_n": len(txn_test_errors),
+        "test_txn_rmse_f": (
+            None
+            if not txn_test_errors
+            else round(math.sqrt(mean(x * x for x in txn_test_errors)), 4)
+        ),
+        "test_txn_mae_f": (
+            None
+            if not txn_test_errors
+            else round(mean(abs(x) for x in txn_test_errors), 4)
+        ),
         "test_corrected_rmse_f": round(
             math.sqrt(mean(x * x for x in corrected_errors)), 4
         ),
@@ -249,8 +266,8 @@ def main():
 
     print(f"Chronological split: train before {test_start}; test on/after {test_start}")
     print()
-    print("lead  train test  bias  RMSE   empLL zeroNLL  XNDsc XNDLL Xcov90")
-    print("----  ----- ----  ----- -----  ----- -------  ----- ----- ------")
+    print("lead  train test  hybRMSE txnRMSE  hybMAE txnMAE  empLL  XNDLL Xcov90")
+    print("----  ----- ----  ------- -------  ------ ------  -----  ----- ------")
 
     for bucket in buckets:
         train = grouped_train.get(bucket, [])
@@ -263,15 +280,17 @@ def main():
 
         stats = evaluate_bucket(train, test)
         report["buckets"][str(bucket)] = stats
-        xnd_scale = stats["xnd_scale"]
         xnd_ll = stats["mean_scaled_xnd_log_loss"]
         xnd_cov = stats["scaled_xnd_coverage_90"]
+        txn_rmse = stats["test_txn_rmse_f"]
+        txn_mae = stats["test_txn_mae_f"]
         print(
             f"{bucket:>4}  {stats['n_train']:>5} {stats['n_test']:>4}  "
-            f"{stats['train_bias_f']:>+5.2f} {stats['test_raw_rmse_f']:>5.2f}  "
-            f"{stats['mean_empirical_log_loss']:>5.3f} "
-            f"{stats['mean_no_bias_normal_log_loss']:>7.3f}  "
-            f"{'-' if xnd_scale is None else f'{xnd_scale:.2f}':>5} "
+            f"{stats['test_raw_rmse_f']:>7.2f} "
+            f"{'-' if txn_rmse is None else f'{txn_rmse:.2f}':>7}  "
+            f"{stats['test_raw_mae_f']:>6.2f} "
+            f"{'-' if txn_mae is None else f'{txn_mae:.2f}':>6}  "
+            f"{stats['mean_empirical_log_loss']:>5.3f}  "
             f"{'-' if xnd_ll is None else f'{xnd_ll:.3f}':>5} "
             f"{'-' if xnd_cov is None else f'{xnd_cov:.1%}':>6}"
         )

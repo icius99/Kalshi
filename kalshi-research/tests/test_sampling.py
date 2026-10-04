@@ -27,6 +27,23 @@ class SamplingTests(unittest.TestCase):
         self.assertEqual(rows[0]["lead_hours"], 25.0)
         self.assertEqual(rows[0]["error"], 0.0)
 
+    def test_calendar_high_diagnostics_are_retained(self):
+        csv_text = (
+            "target_date,runtime_utc,valid_utc,lead_hours,forecast_high_f,"
+            "forecast_sigma_f,forecast_source,txn_high_f,txn_error_f,"
+            "early_tmp_high_f,actual_high_f,error_f\n"
+            "2026-09-25,a,v,25,72,3,early_tmp,68,1,72,69,-3\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.csv"
+            path.write_text(csv_text, encoding="utf-8")
+            rows = load_bucketed_rows(path, (24,), 5)
+
+        self.assertEqual(rows[0]["forecast_source"], "early_tmp")
+        self.assertEqual(rows[0]["txn_forecast"], 68.0)
+        self.assertEqual(rows[0]["txn_error"], 1.0)
+        self.assertEqual(rows[0]["early_tmp_forecast"], 72.0)
+
 
 if __name__ == "__main__":
     unittest.main()

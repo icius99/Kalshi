@@ -9,7 +9,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from research.error_model import ForecastErrorModel
-from research.nbm import fetch_forecast_asof
+from research.nbm import FORECAST_DEFINITION, fetch_forecast_asof
 from research.signals import evaluate_probabilities
 from research.temperature import bucket_from_market
 
@@ -117,6 +117,7 @@ def build_evaluation(args):
     forecast_high = float(nbm["forecast_high_f"])
 
     model = ForecastErrorModel.load(args.model)
+    model.require_forecast_definition(FORECAST_DEFINITION)
     fit, probabilities = model.probabilities_for_markets(
         markets,
         forecast_high,
@@ -160,6 +161,7 @@ def main():
         f"Lead:            {result['lead_hours']:.1f} h -> "
         f"{fit.lead_hours} h error bucket (n={fit.n})"
     )
+    print(f"Predictor:       {FORECAST_DEFINITION}")
     print(
         f"Model:           empirical integer-error distribution; "
         f"RMSE={fit.rmse_f:.2f} F, historical bias={fit.bias_f:+.2f} F "

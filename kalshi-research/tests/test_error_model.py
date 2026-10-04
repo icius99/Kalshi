@@ -61,6 +61,30 @@ class ErrorModelTests(unittest.TestCase):
             probabilities["KXHIGHNY-26OCT04-T70"],
         )
 
+    def test_forecast_definition_guard(self):
+        compatible = ForecastErrorModel(
+            {
+                "forecast_definition": "calendar_day_nbm_txn_plus_early_tmp_v1",
+                "buckets": {
+                    "12": {
+                        "n": 1,
+                        "bias_f": 0,
+                        "sd_error_f": 1,
+                        "rmse_f": 1,
+                        "error_counts": {"0": 1},
+                    }
+                },
+            }
+        )
+        compatible.require_forecast_definition(
+            "calendar_day_nbm_txn_plus_early_tmp_v1"
+        )
+
+        with self.assertRaises(ValueError):
+            self.model.require_forecast_definition(
+                "calendar_day_nbm_txn_plus_early_tmp_v1"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

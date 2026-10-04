@@ -24,6 +24,7 @@ DEFAULT_BUCKETS = "12,24,36,48,60"
 class PipelinePaths:
     dataset: Path
     validation: Path
+    walkforward: Path
     model: Path
     promoted_model: Path
 
@@ -58,6 +59,7 @@ def make_paths(
     return PipelinePaths(
         dataset=historical_dir / f"nbm_nyc_{tag}.csv",
         validation=model_dir / f"nbm_validation_{tag}.json",
+        walkforward=model_dir / f"nbm_walkforward_{tag}.json",
         model=model_dir / f"nbm_error_model_{tag}.json",
         promoted_model=model_dir / "nbm_error_model.json",
     )
@@ -91,6 +93,17 @@ def build_commands(args, paths: PipelinePaths) -> list[list[str]]:
         ]
     )
 
+    commands.append(
+        [
+            py,
+            "-m",
+            "historical.compare_calendar_high",
+            str(paths.dataset),
+            "--buckets",
+            args.buckets,
+        ]
+    )
+
     validation = [
         py,
         "-m",
@@ -104,6 +117,19 @@ def build_commands(args, paths: PipelinePaths) -> list[list[str]]:
     if args.test_start is not None:
         validation.extend(["--test-start", args.test_start.isoformat()])
     commands.append(validation)
+
+    commands.append(
+        [
+            py,
+            "-m",
+            "historical.walkforward_compare",
+            str(paths.dataset),
+            "--buckets",
+            args.buckets,
+            "--output",
+            str(paths.walkforward),
+        ]
+    )
 
     commands.append(
         [
@@ -146,6 +172,7 @@ def main():
     print(f"  range:      {args.start} .. {args.end}")
     print(f"  dataset:    {paths.dataset}")
     print(f"  validation: {paths.validation}")
+    print(f"  walkforward:{paths.walkforward}")
     print(f"  model:      {paths.model}")
     if args.test_start:
         print(f"  holdout:    {args.test_start} and later")

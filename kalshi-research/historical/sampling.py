@@ -60,7 +60,26 @@ def load_bucketed_rows(
                 "forecast_sigma": None,
                 "runtime_utc": raw.get("runtime_utc"),
                 "valid_utc": raw.get("valid_utc"),
+                "forecast_source": raw.get("forecast_source"),
+                "txn_forecast": None,
+                "txn_error": None,
+                "early_tmp_forecast": None,
             }
+
+            optional_numeric = {
+                "txn_high_f": "txn_forecast",
+                "txn_error_f": "txn_error",
+                "early_tmp_high_f": "early_tmp_forecast",
+            }
+            for raw_name, record_name in optional_numeric.items():
+                try:
+                    value_text = raw.get(raw_name)
+                    if value_text not in (None, ""):
+                        value = float(value_text)
+                        if math.isfinite(value):
+                            record[record_name] = value
+                except ValueError:
+                    pass
 
             try:
                 sigma_text = raw.get("forecast_sigma_f")

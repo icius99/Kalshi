@@ -20,6 +20,10 @@ class ResearchPipelineTests(unittest.TestCase):
             Path("hist/nbm_nyc_20210101_20260930.csv"),
         )
         self.assertEqual(
+            paths.walkforward,
+            Path("models/nbm_walkforward_20210101_20260930.json"),
+        )
+        self.assertEqual(
             paths.model,
             Path("models/nbm_error_model_20210101_20260930.json"),
         )
@@ -40,7 +44,7 @@ class ResearchPipelineTests(unittest.TestCase):
         )
         commands = build_commands(args, paths)
 
-        self.assertEqual(len(commands), 4)
+        self.assertEqual(len(commands), 6)
         self.assertEqual(
             commands[0][0:3],
             [sys.executable, "-m", "historical.build_nbm_history"],
@@ -51,11 +55,19 @@ class ResearchPipelineTests(unittest.TestCase):
         )
         self.assertEqual(
             commands[2][0:3],
-            [sys.executable, "-m", "historical.validate_chronological"],
+            [sys.executable, "-m", "historical.compare_calendar_high"],
         )
-        self.assertIn("--test-start", commands[2])
         self.assertEqual(
             commands[3][0:3],
+            [sys.executable, "-m", "historical.validate_chronological"],
+        )
+        self.assertIn("--test-start", commands[3])
+        self.assertEqual(
+            commands[4][0:3],
+            [sys.executable, "-m", "historical.walkforward_compare"],
+        )
+        self.assertEqual(
+            commands[5][0:3],
             [sys.executable, "-m", "historical.forecast_error"],
         )
 
@@ -74,7 +86,7 @@ class ResearchPipelineTests(unittest.TestCase):
             Path("data/models"),
         )
         commands = build_commands(args, paths)
-        self.assertEqual(len(commands), 3)
+        self.assertEqual(len(commands), 5)
         self.assertEqual(
             commands[0][0:3],
             [sys.executable, "-m", "historical.audit_dataset"],

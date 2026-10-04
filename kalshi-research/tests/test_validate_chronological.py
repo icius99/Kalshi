@@ -60,6 +60,31 @@ class ChronologicalValidationTests(unittest.TestCase):
         self.assertIsNotNone(stats["mean_scaled_xnd_log_loss"])
         self.assertIsNotNone(stats["scaled_xnd_coverage_90"])
 
+    def test_evaluate_bucket_compares_txn_on_holdout(self):
+        train = [
+            {"forecast": 60.0, "actual": 61.0, "error": 1.0},
+            {"forecast": 65.0, "actual": 64.0, "error": -1.0},
+            {"forecast": 70.0, "actual": 71.0, "error": 1.0},
+        ]
+        test = [
+            {
+                "forecast": 60.0,
+                "actual": 61.0,
+                "error": 1.0,
+                "txn_error": 5.0,
+            },
+            {
+                "forecast": 70.0,
+                "actual": 69.0,
+                "error": -1.0,
+                "txn_error": -4.0,
+            },
+        ]
+        stats = evaluate_bucket(train, test)
+        self.assertEqual(stats["test_txn_n"], 2)
+        self.assertLess(stats["test_raw_rmse_f"], stats["test_txn_rmse_f"])
+        self.assertLess(stats["test_raw_mae_f"], stats["test_txn_mae_f"])
+
 
 if __name__ == "__main__":
     unittest.main()
