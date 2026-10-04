@@ -10,10 +10,21 @@ from zoneinfo import ZoneInfo
 
 from research.error_model import ForecastErrorModel
 from research.nbm import FORECAST_DEFINITION, fetch_forecast_asof
+from research.observations import (
+    conservative_minimum_settlement_high,
+    fetch_observed_high_asof,
+)
 from research.signals import evaluate_probabilities
 from research.temperature import bucket_from_market
 
 NY = ZoneInfo("America/New_York")
+INTRADAY_CONDITIONING = "nws_observed_high_floor_v1"
+
+
+class PaperEvaluationSkip(RuntimeError):
+    """Paper evaluation should skip normally rather than fail."""
+
+
 EVENT_DATE_RE = re.compile(r"KXHIGHNY-(\d{2})([A-Z]{3})(\d{2})")
 MONTHS = {
     m: i
@@ -47,6 +58,18 @@ def parse_args():
     parser.add_argument("--max-contracts", type=int, default=25)
     parser.add_argument("--max-model-distance", type=float, default=6.0)
     parser.add_argument("--anchor-hour", type=int, default=15)
+    parser.add_argument(
+        "--observation-buffer-f",
+        type=float,
+        default=1.0,
+        help="Conservative NWS-to-settlement source/rounding buffer.",
+    )
+    parser.add_argument(
+        "--max-snapshot-age-minutes",
+        type=float,
+        default=20.0,
+        help="Reject stale collector snapshots; <=0 disables this guard.",
+    )
     return parser.parse_args()
 
 
@@ -110,6 +133,16 @@ def lead_hours_to_anchor(
     ).total_seconds() / 3600.0
 
 
+def snapshot_age_minutes(
+    snapshot_utc: datetime,
+    now_utc: datetime | None = None,
+) -> float:
+    now = now_utc or datetime.now(timezone.utc)
+    return (
+        now.astimezone(timezone.utc) - snapshot_utc.astimezone(timezone.utc)
+    ).total_seconds() / 60.0
+
+
 def build_evaluation(args):
     conn = sqlite3.connect(args.db)
     event, market_timestamp = latest_event(conn, args.event)
@@ -118,8 +151,28 @@ def build_evaluation(args):
 
     target = event_date(event)
     snapshot_dt = datetime.fromisoformat(market_timestamp).astimezone(timezone.utc)
+    age_minutes = snapshot_age_minutes(snapshot_dt)
+    if args.max_snapshot_age_minutes > 0 and age_minutes > args.max_snapshot_age_minutes:
+        raise PaperEvaluationSkip(
+            f"latest market snapshot is {age_minutes:.1f} minutes old "
+            f"(limit {args.max_snapshot_age_minutes:.1f})"
+        )
+
     anchor = datetime.combine(target, time(args.anchor_hour), tzinfo=NY)
     market_lead_hours = lead_hours_to_anchor(anchor, snapshot_dt)
+
+    observed = None
+    minimum_actual_f = None
+    if target == snapshot_dt.astimezone(NY).date():
+        observed = fetch_observed_high_asof(target, snapshot_dt)
+        if observed is None:
+            raise PaperEvaluationSkip(
+                "no Central Park observation was available as of the market snapshot"
+            )
+        minimum_actual_f = conservative_minimum_settlement_high(
+            observed["observed_high_f"],
+            args.observation_buffer_f,
+        )
 
     nbm = fetch_forecast_asof(target, snapshot_dt, anchor_hour=args.anchor_hour)
     forecast_high = float(nbm["forecast_high_f"])
@@ -132,6 +185,7 @@ def build_evaluation(args):
         forecast_high,
         model_lead_hours,
         args.max_model_distance,
+        minimum_actual_f=minimum_actual_f,
     )
     signals = evaluate_probabilities(
         markets,
@@ -159,6 +213,16 @@ def build_evaluation(args):
         "lead_hours": model_lead_hours,
         "model_lead_hours": model_lead_hours,
         "market_lead_hours": market_lead_hours,
+        "snapshot_age_minutes": age_minutes,
+        "observed": observed,
+        "observed_high_f": (
+            None if observed is None else observed["observed_high_f"]
+        ),
+        "minimum_actual_f": minimum_actual_f,
+        "intraday_conditioning": (
+            INTRADAY_CONDITIONING if observed is not None else "not_applicable_future"
+        ),
+        "observation_buffer_f": args.observation_buffer_f,
         "fit": fit,
         "probs": probabilities,
         "signals": signals,
@@ -183,6 +247,16 @@ def main():
         f"Market lead:     {result['market_lead_hours']:.1f} h "
         "(snapshot to 3 PM anchor; not used for calibration)"
     )
+    print(f"Snapshot age:    {result['snapshot_age_minutes']:.1f} min")
+    if result["observed"] is not None:
+        print(
+            f"Observed high:   {result['observed_high_f']:.1f} F "
+            f"through {result['observed']['high_observation_utc'].isoformat()}"
+        )
+        print(
+            f"Condition floor: {result['minimum_actual_f']} F "
+            f"(NWS proxy minus {result['observation_buffer_f']:.1f} F buffer)"
+        )
     print(f"Predictor:       {FORECAST_DEFINITION}")
     print(
         f"Probability:     {result['probability_method']} "
