@@ -12,6 +12,7 @@ from statistics import NormalDist, mean, pstdev
 
 from historical.build_nbm_history import FORECAST_DEFINITION, OBSERVATION_DEFINITION
 from historical.sampling import load_bucketed_rows, nearest_bucket
+from historical.validate_chronological import fit_xnd_scale
 
 # 72h remains available via --buckets, but the live 2021-2026 audit found
 # materially thinner/less stable coverage there. Keep the default model to the
@@ -30,10 +31,10 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_errors(path: Path, buckets: tuple[int, ...], max_distance: float):
+def load_rows(path: Path, buckets: tuple[int, ...], max_distance: float):
     grouped = defaultdict(list)
     for row in load_bucketed_rows(path, buckets, max_distance):
-        grouped[row["lead_bucket"]].append(row["error"])
+        grouped[row["lead_bucket"]].append(row)
     return grouped
 
 
@@ -92,11 +93,16 @@ def main() -> None:
         raise SystemExit("--empirical-alpha must be positive")
 
     buckets = tuple(sorted({int(x.strip()) for x in args.buckets.split(",") if x.strip()}))
-    grouped = load_errors(args.dataset, buckets, args.max_distance)
+    grouped = load_rows(args.dataset, buckets, args.max_distance)
 
     model = {
-        "version": 3,
+        "version": 4,
         "distribution": "empirical_integer_errors",
+        "candidate_distributions": [
+            "empirical_integer_errors",
+            "scaled_nbm_uncertainty_normal",
+        ],
+        "default_probability_method": "empirical_integer_errors",
         "forecast_definition": FORECAST_DEFINITION,
         "observation_definition": OBSERVATION_DEFINITION,
         "station": "KNYC",
@@ -108,24 +114,40 @@ def main() -> None:
         "buckets": {},
     }
 
-    print("lead  n     bias     sd     MAE    RMSE   p90|err|")
-    print("---- ----  -------  -----  -----  -----  --------")
+    print("lead  n     bias     sd     MAE    RMSE   p90|err|  uncN  uncScale")
+    print("---- ----  -------  -----  -----  -----  --------  ----  --------")
     for bucket in buckets:
-        errors = grouped.get(bucket, [])
+        rows = grouped.get(bucket, [])
+        errors = [row["error"] for row in rows]
         if len(errors) < args.min_samples:
             print(f"{bucket:>4} {len(errors):>4}  insufficient samples")
             continue
+
         stats = summarize(errors)
+        uncertainty_scale, uncertainty_n = fit_xnd_scale(rows)
+        stats["nbm_uncertainty_n"] = uncertainty_n
+        stats["nbm_uncertainty_scale"] = (
+            None
+            if uncertainty_scale is None
+            else round(uncertainty_scale, 6)
+        )
+
         model["buckets"][str(bucket)] = stats
+        scale_text = (
+            "-"
+            if stats["nbm_uncertainty_scale"] is None
+            else f"{stats['nbm_uncertainty_scale']:.3f}"
+        )
         print(
             f"{bucket:>4} {stats['n']:>4}  {stats['bias_f']:>+7.2f}  "
             f"{stats['sd_error_f']:>5.2f}  {stats['mae_f']:>5.2f}  "
-            f"{stats['rmse_f']:>5.2f}  {stats['p90_abs_error_f']:>8.2f}"
+            f"{stats['rmse_f']:>5.2f}  {stats['p90_abs_error_f']:>8.2f}  "
+            f"{uncertainty_n:>4}  {scale_text:>8}"
         )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")
-    print(f"\nWrote empirical model to {args.output}")
+    print(f"\nWrote dual-calibration model to {args.output}")
 
 
 if __name__ == "__main__":
