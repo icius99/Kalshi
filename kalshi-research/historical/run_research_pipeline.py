@@ -91,6 +91,17 @@ def build_commands(args, paths: PipelinePaths) -> list[list[str]]:
         ]
     )
 
+    commands.append(
+        [
+            py,
+            "-m",
+            "historical.compare_calendar_high",
+            str(paths.dataset),
+            "--buckets",
+            args.buckets,
+        ]
+    )
+
     validation = [
         py,
         "-m",
