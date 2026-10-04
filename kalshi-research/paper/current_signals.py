@@ -135,11 +135,18 @@ def build_evaluation(args):
 
     return {
         "event": event,
+        "model_version": model.model_version,
+        "forecast_definition": model.forecast_definition,
+        "probability_method": model.payload.get(
+            "default_probability_method", "empirical_integer_errors"
+        ),
         "target": target,
         "market_ts": market_timestamp,
         "markets": markets,
         "nbm": nbm,
         "forecast_high": forecast_high,
+        "forecast_sigma": nbm.get("forecast_sigma_f"),
+        "forecast_source": nbm.get("forecast_source"),
         "lead_hours": lead_hours,
         "fit": fit,
         "probs": probabilities,
@@ -162,6 +169,10 @@ def main():
         f"{fit.lead_hours} h error bucket (n={fit.n})"
     )
     print(f"Predictor:       {FORECAST_DEFINITION}")
+    print(
+        f"Probability:     {result['probability_method']} "
+        f"(schema v{result['model_version']})"
+    )
     print(
         f"Model:           empirical integer-error distribution; "
         f"RMSE={fit.rmse_f:.2f} F, historical bias={fit.bias_f:+.2f} F "
