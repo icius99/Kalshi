@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from paper.current_signals import PaperEvaluationSkip, build_evaluation
 from paper.execution import revalidate_signals
-from paper.ledger import connect, has_open_position
+from paper.ledger import connect, evaluation_key, has_open_position
 from research.error_model import ModelHorizonUnavailable
 
 
@@ -78,6 +79,77 @@ def main():
         )
 
     conn = connect(args.ledger)
+
+    runtime_text = result["nbm"]["runtime_utc"].isoformat()
+    eval_key = evaluation_key(
+        result["event"],
+        runtime_text,
+        result["minimum_actual_f"],
+        int(result["model_version"]),
+        result["probability_method"],
+        result["entry_policy"],
+    )
+    before_changes = conn.total_changes
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO paper_evaluations (
+            evaluation_key,
+            created_at_utc,
+            event_ticker,
+            market_snapshot_utc,
+            execution_quote_utc,
+            forecast_runtime_utc,
+            model_version,
+            forecast_definition,
+            probability_method,
+            forecast_high_f,
+            forecast_sigma_f,
+            forecast_source,
+            model_lead_hours,
+            model_lead_bucket,
+            model_sample_n,
+            market_lead_hours,
+            intraday_conditioning,
+            observed_high_f,
+            minimum_actual_f,
+            observation_buffer_f,
+            entry_policy,
+            probabilities_json,
+            signal_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            eval_key,
+            datetime.now(timezone.utc).isoformat(),
+            result["event"],
+            result["market_ts"],
+            execution_quote_utc,
+            runtime_text,
+            result["model_version"],
+            result["forecast_definition"],
+            result["probability_method"],
+            result["forecast_high"],
+            result["forecast_sigma"],
+            result["forecast_source"],
+            result["model_lead_hours"],
+            result["fit"].lead_hours,
+            result["fit"].n,
+            result["market_lead_hours"],
+            result["intraday_conditioning"],
+            result["observed_high_f"],
+            result["minimum_actual_f"],
+            result["observation_buffer_f"],
+            result["entry_policy"],
+            json.dumps(result["probs"], sort_keys=True),
+            len(live_signals),
+        ),
+    )
+    if conn.total_changes > before_changes:
+        print(
+            f"Recorded live evaluation state for {result['event']} "
+            f"at {result['fit'].lead_hours}h bucket."
+        )
+
     inserted = 0
 
     for signal in live_signals:
