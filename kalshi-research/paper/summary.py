@@ -5,6 +5,8 @@ import argparse
 import sqlite3
 from pathlib import Path
 
+from paper.ledger import connect
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -33,7 +35,7 @@ def mean_or_none(values):
 
 def main():
     args = parse_args()
-    conn = sqlite3.connect(args.ledger)
+    conn = connect(args.ledger)
     conn.row_factory = sqlite3.Row
 
     positions = conn.execute(
