@@ -40,6 +40,40 @@ CREATE TABLE IF NOT EXISTS paper_signals (
 );
 CREATE INDEX IF NOT EXISTS idx_paper_open
 ON paper_signals(status, market_ticker);
+
+CREATE TABLE IF NOT EXISTS paper_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evaluation_key TEXT NOT NULL UNIQUE,
+    created_at_utc TEXT NOT NULL,
+    event_ticker TEXT NOT NULL,
+    market_snapshot_utc TEXT NOT NULL,
+    execution_quote_utc TEXT NOT NULL,
+    forecast_runtime_utc TEXT NOT NULL,
+    model_version INTEGER NOT NULL,
+    forecast_definition TEXT NOT NULL,
+    probability_method TEXT NOT NULL,
+    forecast_high_f REAL NOT NULL,
+    forecast_sigma_f REAL,
+    forecast_source TEXT,
+    model_lead_hours REAL NOT NULL,
+    model_lead_bucket INTEGER NOT NULL,
+    model_sample_n INTEGER NOT NULL,
+    market_lead_hours REAL NOT NULL,
+    intraday_conditioning TEXT,
+    observed_high_f REAL,
+    minimum_actual_f REAL,
+    observation_buffer_f REAL,
+    entry_policy TEXT NOT NULL,
+    probabilities_json TEXT NOT NULL,
+    signal_count INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    winning_market_ticker TEXT,
+    multiclass_brier REAL,
+    log_loss REAL,
+    settled_at_utc TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_paper_eval_status
+ON paper_evaluations(status, event_ticker);
 """
 
 
@@ -113,3 +147,24 @@ def has_open_position(conn: sqlite3.Connection, market_ticker: str) -> bool:
         (market_ticker,),
     ).fetchone()
     return row is not None
+
+
+def evaluation_key(
+    event_ticker: str,
+    forecast_runtime_utc: str,
+    minimum_actual_f: float | None,
+    model_version: int,
+    probability_method: str,
+    entry_policy: str,
+) -> str:
+    floor_text = "none" if minimum_actual_f is None else f"{minimum_actual_f:.1f}"
+    return "|".join(
+        [
+            event_ticker,
+            forecast_runtime_utc,
+            floor_text,
+            f"v{model_version}",
+            probability_method,
+            entry_policy,
+        ]
+    )
