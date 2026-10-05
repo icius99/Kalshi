@@ -1,6 +1,12 @@
 import unittest
 
-from paper.settle import gross_pnl, net_pnl, settlement_yes_from_market
+from paper.settle import (
+    gross_pnl,
+    net_pnl,
+    score_multiclass_probabilities,
+    settled_winner,
+    settlement_yes_from_market,
+)
 
 
 class SettlementTests(unittest.TestCase):
@@ -20,6 +26,36 @@ class SettlementTests(unittest.TestCase):
 
     def test_net_pnl_subtracts_entry_fee(self):
         self.assertAlmostEqual(net_pnl("YES", 0.25, 10, 1, 0.14), 7.36)
+
+    def test_multiclass_scores(self):
+        probabilities = {
+            "A": 0.1,
+            "B": 0.7,
+            "C": 0.2,
+        }
+        brier, log_loss = score_multiclass_probabilities(
+            probabilities,
+            "B",
+        )
+        self.assertAlmostEqual(
+            brier,
+            (0.1 ** 2) + ((0.7 - 1.0) ** 2) + (0.2 ** 2),
+        )
+        self.assertAlmostEqual(log_loss, -__import__("math").log(0.7))
+
+    def test_settled_winner_requires_exactly_one_yes(self):
+        probabilities = {"A": 0.4, "B": 0.6}
+        cache = {
+            "A": {"settlement_value_dollars": "0.0000"},
+            "B": {"settlement_value_dollars": "1.0000"},
+        }
+        self.assertEqual(settled_winner(probabilities, cache), "B")
+
+        ambiguous = {
+            "A": {"settlement_value_dollars": "1.0000"},
+            "B": {"settlement_value_dollars": "1.0000"},
+        }
+        self.assertIsNone(settled_winner(probabilities, ambiguous))
 
 
 if __name__ == "__main__":

@@ -68,6 +68,36 @@ class LedgerTests(unittest.TestCase):
                 self.assertIn(expected, columns)
             conn.close()
 
+    def test_live_evaluation_table_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "paper.db"
+            conn = connect(path)
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            self.assertIn("paper_evaluations", tables)
+
+            columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(paper_evaluations)"
+                ).fetchall()
+            }
+            for expected in (
+                "evaluation_key",
+                "probabilities_json",
+                "model_lead_bucket",
+                "signal_count",
+                "winning_market_ticker",
+                "multiclass_brier",
+                "log_loss",
+            ):
+                self.assertIn(expected, columns)
+            conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
