@@ -48,3 +48,17 @@ systemctl --user disable --now kalshi-paper-cycle.timer
 ```
 
 No real-order placement code is used by this timer.
+
+
+## Health check
+
+Use one command to verify collector freshness, promoted-model compatibility,
+ledger state, and the paper timer:
+
+```bash
+python -m paper.health
+```
+
+The command exits non-zero for a stale collector snapshot, incompatible/missing
+promoted model, or inactive paper timer. A missing recent evaluation row is only
+a warning because forecast states are intentionally deduplicated.
