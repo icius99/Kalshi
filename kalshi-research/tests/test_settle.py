@@ -4,6 +4,7 @@ from paper.settle import (
     gross_pnl,
     net_pnl,
     score_multiclass_probabilities,
+    settled_winner,
     settlement_yes_from_market,
 )
 
@@ -41,6 +42,20 @@ class SettlementTests(unittest.TestCase):
             (0.1 ** 2) + ((0.7 - 1.0) ** 2) + (0.2 ** 2),
         )
         self.assertAlmostEqual(log_loss, -__import__("math").log(0.7))
+
+    def test_settled_winner_requires_exactly_one_yes(self):
+        probabilities = {"A": 0.4, "B": 0.6}
+        cache = {
+            "A": {"settlement_value_dollars": "0.0000"},
+            "B": {"settlement_value_dollars": "1.0000"},
+        }
+        self.assertEqual(settled_winner(probabilities, cache), "B")
+
+        ambiguous = {
+            "A": {"settlement_value_dollars": "1.0000"},
+            "B": {"settlement_value_dollars": "1.0000"},
+        }
+        self.assertIsNone(settled_winner(probabilities, ambiguous))
 
 
 if __name__ == "__main__":
