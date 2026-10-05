@@ -91,7 +91,12 @@ def event_date(ticker: str) -> date:
     return date(2000 + int(year), MONTHS[month], int(day))
 
 
-def latest_event(conn: sqlite3.Connection, explicit: str | None) -> tuple[str, str]:
+def latest_event(
+    conn: sqlite3.Connection,
+    explicit: str | None,
+    anchor_hour: int = 15,
+    min_market_lead_hours: float = 3.0,
+) -> tuple[str, str]:
     if explicit:
         timestamp = conn.execute(
             "SELECT MAX(timestamp_utc) FROM market_snapshots WHERE event_ticker=?",
@@ -106,14 +111,20 @@ def latest_event(conn: sqlite3.Connection, explicit: str | None) -> tuple[str, s
         "WHERE series_ticker='KXHIGHNY' GROUP BY event_ticker"
     ).fetchall()
 
-    today = datetime.now(timezone.utc).astimezone(NY).date()
-    candidates = [
-        (event_date(row[0]), row[0], row[1])
-        for row in rows
-        if event_date(row[0]) >= today
-    ]
+    candidates = []
+    for ticker, timestamp in rows:
+        target = event_date(ticker)
+        snapshot_dt = datetime.fromisoformat(timestamp).astimezone(timezone.utc)
+        anchor = datetime.combine(target, time(anchor_hour), tzinfo=NY)
+        market_lead_hours = lead_hours_to_anchor(anchor, snapshot_dt)
+        if market_lead_hours >= min_market_lead_hours:
+            candidates.append((target, ticker, timestamp))
+
     if not candidates:
-        raise SystemExit("No current/future KXHIGHNY event found")
+        raise PaperEvaluationSkip(
+            "no KXHIGHNY event has a current snapshot inside the allowed "
+            f"entry window (minimum lead {min_market_lead_hours:.1f}h)"
+        )
 
     _, ticker, timestamp = min(candidates)
     return ticker, timestamp
@@ -168,7 +179,12 @@ def enforce_entry_window(
 
 def build_evaluation(args):
     conn = sqlite3.connect(args.db)
-    event, market_timestamp = latest_event(conn, args.event)
+    event, market_timestamp = latest_event(
+        conn,
+        args.event,
+        args.anchor_hour,
+        args.min_market_lead_hours,
+    )
     markets = load_markets(conn, event, market_timestamp)
     conn.close()
 
